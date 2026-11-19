@@ -44,10 +44,15 @@
       const vp = jsPage.getViewport({ scale: 1 });
       const inv = invert(vp.transform);
 
+      const gs = new Map();
       const res = {
-        doc, font, fontBold, gs: new Map(), images: {},
+        font, fontBold, images: {},
         fontName: page.node.newFontDictionary('LPF', font.ref),
         fontBoldName: page.node.newFontDictionary('LPFB', fontBold.ref),
+        gsName(a) {
+          if (!gs.has(a)) gs.set(a, page.node.newExtGState('GS', doc.context.obj({ Type: 'ExtGState', CA: a, ca: a })));
+          return gs.get(a);
+        },
       };
       for (const a of list) {
         if (a.type === 'symbol' && a.sym.shape === 'image' && !res.images[a.sym.id] && images[a.sym.id]) {
@@ -63,7 +68,7 @@
       // normalisation de la page (autoNormalizeCTM), on repart donc d'un état propre.
       page.node.normalize();
 
-      const R = new LP.PdfRenderer(page, res);
+      const R = new LP.PdfRenderer(res);
       R.save();
       R.transform(...inv); // repère « page affichée » (y vers le bas) → espace PDF
       for (const a of list) LP.drawAnnotation(R, a, env);

@@ -104,13 +104,16 @@
   Object.assign(CanvasRenderer.prototype, shared);
 
   /* ---------------- PDF (pdf-lib) ---------------- */
+  /*
+   * res = { font, fontBold, fontName, fontBoldName, gsName(alpha) -> PDFName, images: {id: PDFName} }
+   * Les ressources sont fournies soit par une page (dessin aplati), soit par
+   * un Form XObject (apparence /AP d'une annotation native).
+   */
   class PdfRenderer {
-    // ops : tableau qui reçoit les opérateurs ; res : ressources de page
-    constructor(page, res) {
+    constructor(res) {
       const L = window.PDFLib;
       this.L = L;
-      this.page = page;
-      this.res = res; // {font, fontBold, gs: Map, images: {id: name}, doc}
+      this.res = res;
       this.ops = [];
       this.kind = 'pdf';
       this.alpha = 1;
@@ -127,13 +130,7 @@
     setAlpha(a) {
       a = Math.round(a * 100) / 100;
       this.alpha = a;
-      let name = this.res.gs.get(a);
-      if (!name) {
-        const dict = this.res.doc.context.obj({ Type: 'ExtGState', CA: a, ca: a });
-        name = this.page.node.newExtGState('GS', dict);
-        this.res.gs.set(a, name);
-      }
-      this.push(this.L.setGraphicsState(name));
+      this.push(this.L.setGraphicsState(this.res.gsName(a)));
     }
     beginPath() {}
     moveTo(x, y) { this.push(this.L.moveTo(x, y)); }

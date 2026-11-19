@@ -12,7 +12,10 @@
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
+    note: 'Note (commentaire)', markup: 'Annotation de texte',
   };
+  const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
+  const NOTE_SIZE = 18;
 
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -69,14 +72,24 @@
   }
 
   function cloudPath(R, x, y, w, h, arc) {
-    const corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
-    R.moveTo(x, y);
-    for (let i = 0; i < 4; i++) {
-      const p = corners[i], q = corners[(i + 1) % 4];
+    cloudPoly(R, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], arc);
+  }
+  // Nuage de révision le long d'un polygone quelconque (arcs vers l'extérieur)
+  function cloudPoly(R, corners, arc) {
+    let area = 0;
+    for (let i = 0; i < corners.length; i++) {
+      const p = corners[i], q = corners[(i + 1) % corners.length];
+      area += p[0] * q[1] - q[0] * p[1];
+    }
+    const sg = area >= 0 ? 1 : -1;
+    R.moveTo(corners[0][0], corners[0][1]);
+    for (let i = 0; i < corners.length; i++) {
+      const p = corners[i], q = corners[(i + 1) % corners.length];
       const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (!len) continue;
       const n = Math.max(1, Math.round(len / arc));
-      const ux = (q[0] - p[0]) / len || 0, uy = (q[1] - p[1]) / len || 0;
-      const nx = uy, ny = -ux; // normale extérieure (parcours horaire, y vers le bas)
+      const ux = (q[0] - p[0]) / len, uy = (q[1] - p[1]) / len;
+      const nx = sg * uy, ny = -sg * ux; // normale extérieure (y vers le bas)
       for (let k = 0; k < n; k++) {
         const a0 = [p[0] + ((q[0] - p[0]) * k) / n, p[1] + ((q[1] - p[1]) * k) / n];
         const a1 = [p[0] + ((q[0] - p[0]) * (k + 1)) / n, p[1] + ((q[1] - p[1]) * (k + 1)) / n];
@@ -84,6 +97,32 @@
       }
     }
     R.closePath();
+  }
+
+  // Encre : a.breaks = indices où commence un nouveau trait
+  function strokes(a) {
+    if (!a.breaks || !a.breaks.length) return [a.pts];
+    const out = [];
+    let start = 0;
+    for (const b of a.breaks.concat([a.pts.length])) { if (b > start) out.push(a.pts.slice(start, b)); start = b; }
+    return out;
+  }
+
+  function noteIcon(R, x, y, color) {
+    const s = NOTE_SIZE;
+    R.save();
+    R.setStroke('#5a4a00');
+    R.setLineWidth(0.8);
+    R.setDash([]);
+    R.beginPath();
+    R.moveTo(x, y); R.lineTo(x + s, y); R.lineTo(x + s, y + s * 0.72);
+    R.lineTo(x + s * 0.45, y + s * 0.72); R.lineTo(x + s * 0.2, y + s); R.lineTo(x + s * 0.25, y + s * 0.72);
+    R.lineTo(x, y + s * 0.72); R.closePath();
+    R.paint(color || '#ffd400', true);
+    R.beginPath();
+    for (let i = 1; i <= 3; i++) { R.moveTo(x + s * 0.18, y + s * 0.18 * i); R.lineTo(x + s * 0.82, y + s * 0.18 * i); }
+    R.stroke();
+    R.restore();
   }
 
   function centroid(pts) {
@@ -163,8 +202,34 @@
         R.beginPath(); cloudPath(R, x, y, w, h, s.arc || 14); R.paint(fill, stroke);
         break;
       }
-      case 'polyline':
       case 'ink':
+        R.beginPath();
+        for (const st of strokes(a)) R.polyPath(st, false);
+        R.stroke();
+        break;
+      case 'note':
+        noteIcon(R, pts[0][0], pts[0][1], s.stroke);
+        break;
+      case 'markup': {
+        R.setDash([]);
+        for (let i = 0; i + 3 < pts.length; i += 4) {
+          const [tl, tr, bl, br] = pts.slice(i, i + 4);
+          if (a.markup === 'Highlight') {
+            R.beginPath(); R.polyPath([tl, tr, br, bl], true); R.paint(color, false);
+          } else {
+            const t = a.markup === 'StrikeOut' ? 0.5 : 0.92;
+            const h = Math.hypot(bl[0] - tl[0], bl[1] - tl[1]);
+            R.setLineWidth(Math.max(h * 0.07, 0.5));
+            if (a.markup === 'Squiggly') R.setDash([h * 0.15, h * 0.1]);
+            R.beginPath();
+            R.moveTo(tl[0] + (bl[0] - tl[0]) * t, tl[1] + (bl[1] - tl[1]) * t);
+            R.lineTo(tr[0] + (br[0] - tr[0]) * t, tr[1] + (br[1] - tr[1]) * t);
+            R.stroke();
+          }
+        }
+        break;
+      }
+      case 'polyline':
       case 'polylength': {
         R.beginPath(); R.polyPath(pts, false); R.stroke();
         if (a.type === 'polylength' && pts.length > 1) {
@@ -178,7 +243,9 @@
       }
       case 'polygon':
       case 'area': {
-        R.beginPath(); R.polyPath(pts, true); R.paint(fill, stroke);
+        R.beginPath();
+        if (s.cloud && a.type === 'polygon') cloudPoly(R, pts, s.arc || 14); else R.polyPath(pts, true);
+        R.paint(fill, stroke);
         if (a.type === 'area' && pts.length > 2) {
           const sc = env && env.scaleFor(a.page);
           const A = LP.polyArea(pts);
@@ -244,8 +311,16 @@
       }
       case 'line': case 'arrow': case 'length': case 'calibrate':
         return distSeg(x, y, p[0], p[1]) <= tol;
-      case 'polyline': case 'ink': case 'polylength':
+      case 'polyline': case 'polylength':
         for (let i = 1; i < p.length; i++) if (distSeg(x, y, p[i - 1], p[i]) <= tol) return true;
+        return false;
+      case 'ink':
+        for (const st of strokes(a)) for (let i = 1; i < st.length; i++) if (distSeg(x, y, st[i - 1], st[i]) <= tol + (a.style.width || 1) / 2) return true;
+        return false;
+      case 'note':
+        return x >= p[0][0] - tol && x <= p[0][0] + NOTE_SIZE + tol && y >= p[0][1] - tol && y <= p[0][1] + NOTE_SIZE + tol;
+      case 'markup':
+        for (let i = 0; i + 3 < p.length; i += 4) if (inPoly(x, y, [p[i], p[i + 1], p[i + 3], p[i + 2]])) return true;
         return false;
       case 'polygon': case 'area': {
         for (let i = 0; i < p.length; i++) if (distSeg(x, y, p[i], p[(i + 1) % p.length]) <= tol) return true;
@@ -272,6 +347,7 @@
   }
 
   function bbox(a) {
+    if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
     if (a.type === 'symbol') {
       const sz = a.size || a.sym.size;
       return [a.pts[0][0] - sz / 2, a.pts[0][1] - sz / 2, sz, sz];
@@ -279,6 +355,27 @@
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const q of a.pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
     return [x0, y0, x1 - x0, y1 - y0];
+  }
+
+  /*
+   * Emprise visuelle (traits, étiquettes, têtes de flèche compris) — sert
+   * de /Rect et de /BBox pour les annotations PDF natives.
+   */
+  function visualBounds(a) {
+    const s = a.style || {};
+    const lw = s.width || 1;
+    let [x, y, w, h] = bbox(a);
+    let m = lw * 2 + 2;
+    if (a.type === 'symbol') {
+      const sz = a.size || a.sym.size;
+      const ts = Math.max(5, Math.min(sz * 0.5, 10));
+      const tagLen = ((a.tag != null ? a.tag : a.sym.tag) || '').length;
+      return [a.pts[0][0] - sz * 0.75 - lw, a.pts[0][1] - sz * 0.75 - ts, sz * 1.5 + tagLen * ts * 0.75 + ts + 2 * lw, sz * 1.5 + ts * 2];
+    }
+    if (a.type === 'arrow' || a.type === 'callout') m += Math.max(lw * 4, 6);
+    if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
+    if (['length', 'calibrate', 'polylength', 'area'].includes(a.type)) m += (s.fontSize || 9) * 7;
+    return [x - m, y - m, w + 2 * m, h + 2 * m];
   }
 
   // Résumé texte (liste d'annotations / CSV)
@@ -293,6 +390,8 @@
       case 'polylength': return sc ? LP.fmtLength(LP.polyLength(a.pts) * sc.mpp, sc.unit) : 'non calibré';
       case 'area': return sc ? LP.fmtArea(LP.polyArea(a.pts) * sc.mpp * sc.mpp, sc.unit) : 'non calibré';
       case 'text': case 'callout': return (a.text || '').slice(0, 60);
+      case 'note': return (a.comment || '').slice(0, 60);
+      case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
     }
     return a.comment || '';
   }
@@ -307,5 +406,5 @@
     return null;
   }
 
-  Object.assign(LP, { TYPE_LABELS, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
+  Object.assign(LP, { TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
 })();

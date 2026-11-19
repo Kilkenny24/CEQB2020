@@ -10,7 +10,7 @@
 
   /* ======================= État ======================= */
   const S = {
-    pdf: null, pdfBytes: null, fileName: '', fingerprint: '', numPages: 0, pageLabels: null,
+    pdf: null, pdfBytes: null, cleanBytes: null, native: null, fileName: '', fingerprint: '', numPages: 0, pageLabels: null,
     pageNum: 1, page: null, vp: null, // pdf.js page + viewport échelle 1
     zoom: 1, pan: { x: 0, y: 0 },
     annots: [], sel: new Set(),
@@ -40,6 +40,8 @@
     polylength: { stroke: '#0050c8', width: 1.5, opacity: 1, dash: 'solid', fontSize: 9 },
     area: { stroke: '#0050c8', fill: '#4f8df5', width: 1, opacity: 0.35, dash: 'solid', fontSize: 9 },
     calibrate: { stroke: '#ff7a00', width: 1, opacity: 1, dash: 'dash', fontSize: 9 },
+    note: { stroke: '#ffd400', width: 1, opacity: 1, dash: 'solid' },
+    markup: { stroke: '#ffeb3b', width: 1, opacity: 0.4, dash: 'solid' },
   };
   let defaults = JSON.parse(JSON.stringify(DEFAULT_STYLE));
   const symDefaults = { rot: 0, showTag: true };
@@ -61,6 +63,7 @@
     { id: 'highlight', key: 'i', label: 'Surligneur', icon: '<path d="M4 20h7M14 4l6 6-8 8H6v-6z"/>' },
     { id: 'text', key: 't', label: 'Texte', icon: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>' },
     { id: 'callout', key: 'q', label: 'Bulle', icon: '<rect x="9" y="3" width="12" height="9" rx="1"/><path d="M9 10L3 20"/>' },
+    { id: 'note', key: 'o', label: 'Note', icon: '<path d="M4 4h16v11H11l-5 5v-5H4z"/><path d="M8 8h8M8 11h6"/>' },
     'sep',
     { id: 'calibrate', key: 'k', label: 'Calibrer', icon: '<path d="M3 16l13-13 5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/>' },
     { id: 'length', key: 'm', label: 'Longueur', icon: '<path d="M4 12h16M4 8v8M20 8v8"/>' },
@@ -93,9 +96,18 @@
   let workerReady = null;
   function setupPdfWorker() {
     if (workerReady) return workerReady;
+    if (location.protocol === 'file:' && window.PDFJS_WORKER_SOURCE) {
+      // En file://, un Worker ne peut pas charger un fichier : on le démarre
+      // depuis un Blob contenant le code du worker (rendu hors du fil principal).
+      try {
+        const url = URL.createObjectURL(new Blob([window.PDFJS_WORKER_SOURCE], { type: 'text/javascript' }));
+        pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(url);
+        workerReady = Promise.resolve();
+        return workerReady;
+      } catch (e) { console.warn('Worker Blob impossible, repli sur le fil principal', e); }
+    }
     if (location.protocol === 'file:') {
-      // Les navigateurs bloquent les Web Workers en file:// → on charge le
-      // worker dans la page (mode « fake worker » de pdf.js).
+      // Repli : worker exécuté dans la page (mode « fake worker » de pdf.js).
       workerReady = new Promise((res, rej) => {
         const sc = document.createElement('script');
         sc.src = 'vendor/pdfjs/pdf.worker.min.js';
@@ -110,9 +122,24 @@
     return workerReady;
   }
 
+  async function sha256(bytes) {
+    try {
+      const h = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return Array.from(h.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) { return null; }
+  }
+
   async function openPdfBytes(bytes, name) {
     await setupPdfWorker();
-    const copy = bytes.slice(); // pdf.js détache le tampon reçu
+    toast('Lecture des annotations existantes…', 60000);
+    let native;
+    try { native = await LP.readNative(bytes); } catch (e) {
+      console.warn('Lecture des annotations natives impossible', e);
+      native = { failed: true, pages: new Map(), importedRefs: new Set(), cleanBytes: bytes };
+    }
+    // pdf.js affiche la copie « propre » : les annotations importées sont
+    // redessinées par LumiPlan (donc sélectionnables et modifiables)
+    const copy = native.cleanBytes.slice(); // pdf.js détache le tampon reçu
     let pdf;
     try {
       pdf = await pdfjsLib.getDocument({
@@ -122,16 +149,19 @@
       }).promise;
     } catch (e) {
       alert("Impossible d'ouvrir ce PDF : " + e.message);
+      toast('');
       return false;
     }
     if (S.pdf) S.pdf.destroy();
     S.pdf = pdf;
     S.pdfBytes = bytes;
+    S.cleanBytes = native.cleanBytes;
+    S.native = native;
     S.fileName = name;
-    S.fingerprint = (pdf.fingerprints && pdf.fingerprints[0]) || name;
+    S.fingerprint = (await sha256(bytes)) || (pdf.fingerprints && pdf.fingerprints[0]) || name;
     S.numPages = pdf.numPages;
     S.pageLabels = await pdf.getPageLabels().catch(() => null);
-    S.annots = [];
+    S.annots = await importNative(pdf, native);
     S.sel.clear();
     S.scales = {};
     S.undo = []; S.redo = [];
@@ -141,6 +171,9 @@
     $('#dropHint').style.display = 'none';
     document.title = `${name} — LumiPlan`;
     await goPage(1, true);
+    if (native.encrypted) toast('PDF protégé : annotations existantes non modifiables', 8000);
+    else if (native.failed) toast('Annotations existantes illisibles : affichées sans être modifiables', 8000);
+    else toast(S.annots.length ? `${S.annots.length} annotation(s) existante(s) importée(s) — modifiables` : 'PDF ouvert', 5000);
 
     // Projet en attente (ouvert avant le PDF) ou sauvegarde automatique
     if (pendingProject) {
@@ -148,7 +181,7 @@
       applyProject(p, true);
     } else {
       const auto = await LP.store.get('auto:' + S.fingerprint);
-      if (auto && auto.annots && auto.annots.length) {
+      if (auto && auto.annots && auto.annots.length && LP.annotsDiffer(auto.annots, S.annots)) {
         if (confirm(`${auto.annots.length} annotation(s) enregistrée(s) automatiquement pour ce PDF le ${new Date(auto.saved).toLocaleString('fr-CA')}.\n\nLes restaurer ?`)) {
           applyProject(auto, true);
         }
@@ -157,6 +190,21 @@
     refreshPanels();
     return true;
   }
+
+  // Convertit les annotations lues dans le PDF en annotations LumiPlan
+  async function importNative(pdf, native) {
+    const out = [];
+    for (const [pageNum, entries] of native.pages) {
+      const page = await pdf.getPage(pageNum);
+      const vp = page.getViewport({ scale: 1 });
+      const P = (x, y) => vp.convertToViewportPoint(x, y);
+      for (const e of entries) {
+        try { const a = LP.nativeToModel(e, pageNum, P); if (a) out.push(a); } catch (err) { console.warn('Annotation ignorée', e, err); }
+      }
+    }
+    return out;
+  }
+  LP.annotsDiffer = (x, y) => JSON.stringify(x.map(LP.annotStamp)) !== JSON.stringify(y.map(LP.annotStamp));
 
   /* ======================= Rendu de la page ======================= */
   const previewCache = new Map(); // page -> {canvas, scale}
@@ -345,7 +393,7 @@
       octx.setLineDash([4 / S.zoom, 3 / S.zoom]);
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
-      if (S.sel.size === 1 && a.type !== 'symbol' && a.type !== 'ink') {
+      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup'].includes(a.type)) {
         for (const p of a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -457,7 +505,7 @@
   function handleHit(x, y) {
     if (S.sel.size !== 1) return null;
     const a = S.annots.find((q) => S.sel.has(q.id));
-    if (!a || a.page !== S.pageNum || a.type === 'symbol' || a.type === 'ink') return null;
+    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup'].includes(a.type)) return null;
     const r = 6 / S.zoom;
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
@@ -504,6 +552,18 @@
       return;
     }
     if (tool === 'symbol') { placeSymbol(p); return; }
+    if (tool === 'note') {
+      const a = newAnnot('note', [[p[0], p[1] - LP.NOTE_SIZE]]);
+      a.replies = [];
+      pushUndo();
+      S.annots.push(a);
+      setTool('select');
+      S.sel.add(a.id);
+      changed(); refreshProps();
+      const ta = document.querySelector('#props textarea[data-k=comment]');
+      if (ta) ta.focus();
+      return;
+    }
     if (tool === 'ink') {
       drawing = newAnnot('ink', [p]);
       drag = { kind: 'ink' };
@@ -558,7 +618,7 @@
           drag.moved = true;
           if (drag.alt) {
             // Alt + glisser = duplique
-            const copies = S.annots.filter((a) => S.sel.has(a.id)).map((a) => Object.assign(JSON.parse(JSON.stringify(a)), { id: LP.uid() }));
+            const copies = S.annots.filter((a) => S.sel.has(a.id)).map(cloneAnnot);
             S.annots.push(...copies);
             S.sel = new Set(copies.map((c) => c.id));
           }
@@ -861,6 +921,16 @@
     S.sel.clear();
     changed(); refreshProps();
   }
+  // Copie indépendante : nouvel identifiant, sans lien vers l'objet PDF d'origine ni ses réponses
+  function cloneAnnot(src) {
+    const a = JSON.parse(JSON.stringify(src));
+    a.id = LP.uid();
+    delete a.src; delete a.srcStamp;
+    a.replies = [];
+    a.author = S.author;
+    return a;
+  }
+
   function copySel() {
     S.clipboard = S.annots.filter((a) => S.sel.has(a.id)).map((a) => JSON.parse(JSON.stringify(a)));
     if (S.clipboard.length) toast(`${S.clipboard.length} annotation(s) copiée(s)`);
@@ -872,8 +942,8 @@
     const off = samePage ? 12 : 0;
     S.sel.clear();
     for (const c of S.clipboard) {
-      const a = JSON.parse(JSON.stringify(c));
-      a.id = LP.uid(); a.page = S.pageNum;
+      const a = cloneAnnot(c);
+      a.page = S.pageNum;
       a.pts.forEach((q) => { q[0] += off; q[1] += off; });
       a.created = a.modified = new Date().toISOString();
       S.annots.push(a); S.sel.add(a.id);
@@ -888,7 +958,7 @@
       over.style.cursor = handleHit(...p) ? 'crosshair' : topHit(...p) ? 'move' : 'default';
       return;
     }
-    over.style.cursor = S.tool === 'symbol' ? 'copy' : 'crosshair';
+    over.style.cursor = S.tool === 'symbol' || S.tool === 'note' ? 'copy' : 'crosshair';
   }
 
   function updatePosStatus(p) {
@@ -929,6 +999,7 @@
       area: 'Cliquer pour ajouter des sommets ; double-clic ou Entrée pour terminer',
       calibrate: 'Tracer une ligne sur une cote connue, puis saisir sa longueur réelle',
       callout: 'Glisser de la pointe vers l\'emplacement du texte',
+      note: 'Cliquer pour placer une note (commentaire), puis écrire dans le panneau de droite',
     };
     $('#statusTool').textContent = `${t ? t.label : ''} — ${hints[id] || 'Glisser pour dessiner (Maj = contraindre)'}`;
     updateCursor(hover);
@@ -1003,7 +1074,13 @@
       if (target.length === 1) {
         h += `<label class="full"><span>Commentaire</span><textarea data-k="comment" placeholder="Note, statut, question…">${esc(first.comment || '')}</textarea></label>`;
         const desc = LP.describeAnnotation(first, env);
-        h += `<p class="hint">${desc && first.type !== 'text' && first.type !== 'callout' ? '<b>' + esc(desc) + '</b><br>' : ''}Auteur : ${esc(first.author || '—')}<br>Modifié : ${new Date(first.modified).toLocaleString('fr-CA')}</p>`;
+        h += `<p class="hint">${desc && !['text', 'callout', 'note'].includes(first.type) ? '<b>' + esc(desc) + '</b><br>' : ''}Auteur : <b>${esc(first.author || '—')}</b><br>Modifié : ${fmtDate(first.modified)}${first.src ? '<br><i>Annotation d\'origine du PDF</i>' : ''}</p>`;
+        h += `<div class="thread"><h3>Réponses (${(first.replies || []).length})</h3>`;
+        (first.replies || []).forEach((r, i) => {
+          h += `<div class="reply"><div class="rh"><b>${esc(r.author || '—')}</b> <small>${fmtDate(r.modified || r.created)}</small>${r.state ? ` <small class="state">${esc(r.state)}</small>` : ''}<button data-rdel="${i}" title="Supprimer la réponse">✕</button></div>
+            <textarea data-r="${i}">${esc(r.text || '')}</textarea></div>`;
+        });
+        h += `<textarea id="newReply" placeholder="Écrire une réponse…"></textarea><div class="row"><button id="btnReply" class="primary">Répondre</button></div></div>`;
       }
       h += `<div class="row"><button data-act="front">Premier plan</button><button data-act="back">Arrière-plan</button><button data-act="del">Supprimer</button></div>`;
       if (!allSym) h += `<div class="row"><button data-act="setdef">Définir comme style par défaut</button></div>`;
@@ -1020,6 +1097,31 @@
         applyProp(k, v, target, isDefaults, el);
       });
     });
+    if (!isDefaults && target.length === 1) {
+      const a = target[0];
+      box.querySelectorAll('textarea[data-r]').forEach((ta) => ta.addEventListener('change', () => {
+        const r = a.replies[+ta.dataset.r];
+        pushUndo();
+        r.text = ta.value; r.modified = new Date().toISOString();
+        changed();
+      }));
+      box.querySelectorAll('[data-rdel]').forEach((b) => b.addEventListener('click', () => {
+        if (!confirm('Supprimer cette réponse ?')) return;
+        pushUndo();
+        a.replies.splice(+b.dataset.rdel, 1);
+        changed(); refreshProps();
+      }));
+      const btn = box.querySelector('#btnReply');
+      if (btn) btn.addEventListener('click', () => {
+        const t = box.querySelector('#newReply').value.trim();
+        if (!t) return;
+        if (!S.author && !confirm("Aucun nom d'auteur n'est défini (en haut à droite). Répondre quand même ?")) return;
+        pushUndo();
+        const now = new Date().toISOString();
+        (a.replies = a.replies || []).push({ id: LP.uid(), author: S.author, text: t, created: now, modified: now });
+        changed(); refreshProps();
+      });
+    }
     box.querySelectorAll('.swatches span').forEach((sp) => sp.addEventListener('click', () => {
       applyProp(sp.parentElement.dataset.k, sp.dataset.c, target, isDefaults);
       refreshProps();
@@ -1041,6 +1143,8 @@
       }
     }));
   }
+
+  function fmtDate(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleString('fr-CA'); }
 
   function colorField(label, k, v) {
     return `<label>${label} <input type="color" data-k="${k}" value="${v}"></label>
@@ -1331,7 +1435,13 @@
   function renderAnnotList() {
     const box = $('#annotList');
     const all = $('#listScope').value === 'all';
-    const list = S.annots.filter((a) => all || a.page === S.pageNum);
+    const authSel = $('#authorFilter');
+    const authors = [...new Set(S.annots.map((a) => a.author || ''))].sort();
+    const curA = authSel.value;
+    authSel.innerHTML = '<option value="*">Tous les auteurs</option>' + authors.map((x) => `<option value="${esc(x)}">${esc(x || '(sans auteur)')}</option>`).join('');
+    authSel.value = authors.includes(curA) ? curA : '*';
+    const fa = authSel.value;
+    const list = S.annots.filter((a) => (all || a.page === S.pageNum) && (fa === '*' || (a.author || '') === fa));
     if (!list.length) { box.innerHTML = '<p class="hint">Aucune annotation</p>'; return; }
     const MAX = 500;
     box.innerHTML = list.slice(0, MAX).map((a) => {
@@ -1339,7 +1449,7 @@
       const desc = LP.describeAnnotation(a, env);
       return `<div class="item${S.sel.has(a.id) ? ' sel' : ''}" data-id="${a.id}"><span class="dot" style="background:${col}"></span>
         <div>${esc(LP.TYPE_LABELS[a.type])}${desc && desc !== a.comment ? ' — ' + esc(desc) : ''}${a.comment ? '<br><span class="meta">' + esc(a.comment) + '</span>' : ''}</div>
-        <span class="meta">p.${a.page}</span></div>`;
+        <span class="meta">p.${a.page}</span><span></span><span class="meta">${esc(a.author || '')}${(a.replies || []).length ? ' · 💬 ' + a.replies.length : ''}</span></div>`;
     }).join('') + (list.length > MAX ? `<p class="hint">… ${list.length - MAX} autres</p>` : '');
     box.querySelectorAll('.item').forEach((el) => el.addEventListener('click', async () => {
       const a = S.annots.find((x) => x.id === el.dataset.id);
@@ -1426,6 +1536,7 @@
       modified: new Date().toISOString(),
       scales: S.scales, unit: S.unit,
       annots: S.annots, images: usedImg,
+      deletedSrc: deletedSrc(),
       library: S.library,
     };
     if (withPdf && S.pdfBytes) p.pdfData = LP.bytesToBase64(S.pdfBytes);
@@ -1433,7 +1544,14 @@
   }
 
   function applyProject(p, silent) {
-    S.annots = (p.annots || []).filter((a) => a && a.pts && a.type);
+    const incoming = (p.annots || []).filter((a) => a && a.pts && a.type);
+    // Sécurité : une annotation d'origine du PDF absente du projet (projet plus
+    // ancien que l'import) est conservée, pour ne jamais effacer le commentaire
+    // d'un autre participant par accident.
+    const known = new Set(incoming.filter((a) => a.src).map((a) => a.src.ref));
+    const deleted = new Set(p.deletedSrc || []);
+    const keepImported = S.annots.filter((a) => a.src && !known.has(a.src.ref) && !deleted.has(a.src.ref));
+    S.annots = keepImported.concat(incoming);
     S.scales = p.scales || {};
     if (p.unit) S.unit = p.unit;
     Object.assign(S.images, p.images || {});
@@ -1473,6 +1591,15 @@
     toast('Projet chargé');
   }
 
+  // Références des annotations d'origine supprimées volontairement
+  function deletedSrc() {
+    if (!S.native) return [];
+    const present = new Set(S.annots.filter((a) => a.src).map((a) => a.src.ref));
+    const out = [];
+    for (const list of S.native.pages.values()) for (const e of list) if (!present.has(e.ref)) out.push(e.ref);
+    return out;
+  }
+
   function baseName() { return (S.fileName || 'plan').replace(/\.pdf$/i, ''); }
 
   async function saveProject(saveAs, withPdf) {
@@ -1490,13 +1617,17 @@
     toast('Projet enregistré');
   }
 
-  async function exportPdfFile() {
+  async function exportPdfFile(flatten) {
     if (!S.pdf) { alert("Ouvrez d'abord un PDF."); return; }
     commitText();
+    if (!flatten && S.native && S.native.encrypted) { alert("Ce PDF est protégé : seules les annotations aplaties peuvent être exportées."); return; }
     toast('Export PDF en cours…', 60000);
     try {
-      const bytes = await LP.exportPdf(S.pdfBytes, S.pdf, S.annots, S.images, env, (d, n) => toast(`Export… page ${d}/${n}`, 60000));
-      await LP.saveBlob(new Blob([bytes], { type: 'application/pdf' }), baseName() + '_annoté.pdf', {
+      const prog = (d, n) => toast(`Export… page ${d}/${n}`, 60000);
+      const bytes = flatten
+        ? await LP.exportPdf(S.cleanBytes || S.pdfBytes, S.pdf, S.annots, S.images, env, prog)
+        : await LP.exportNative(S.pdfBytes, S.pdf, S.annots, S.images, env, S.native, prog);
+      await LP.saveBlob(new Blob([bytes], { type: 'application/pdf' }), baseName() + (flatten ? '_aplati.pdf' : '_annoté.pdf'), {
         types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
       });
       toast('PDF annoté exporté');
@@ -1525,11 +1656,12 @@
     for (const e of computeQty()) rows.push([e.label, fmtQty(e, e.total)]);
     rows.push([]);
     rows.push(['LISTE DES ANNOTATIONS']);
-    rows.push(['Page', 'Type', 'Description', 'Étiquette', 'Commentaire', 'Valeur (m ou m²)', 'Auteur', 'Créé', 'Modifié']);
+    rows.push(['Page', 'Type', 'Description', 'Étiquette', 'Commentaire', 'Valeur (m ou m²)', 'Auteur', 'Créé', 'Modifié', 'Réponses']);
     for (const a of [...S.annots].sort((x, y) => x.page - y.page)) {
       const q = LP.quantityAnnotation(a, env);
       rows.push([a.page, LP.TYPE_LABELS[a.type], LP.describeAnnotation(a, env), a.tag || '', a.comment || '',
-        q == null ? '' : q.toFixed(3).replace('.', ','), a.author || '', a.created, a.modified]);
+        q == null ? '' : q.toFixed(3).replace('.', ','), a.author || '', a.created, a.modified,
+        (a.replies || []).map((r) => `${r.author || '?'} : ${r.text}`).join(' | ')]);
     }
     const csv = '﻿' + rows.map((r) => r.map(csvCell).join(';')).join('\r\n');
     await LP.saveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), baseName() + '_decompte.csv', {
@@ -1552,7 +1684,9 @@
     $('#btnSaveProj').onclick = () => saveProject(false);
     $('#btnSaveProjAs').onclick = () => saveProject(true);
     $('#btnSaveBundle').onclick = () => saveProject(true, true);
-    $('#btnExportPdf').onclick = exportPdfFile;
+    $('#btnExportPdf').onclick = () => exportPdfFile(false);
+    $('#btnExportFlat').onclick = () => exportPdfFile(true);
+    $('#authorFilter').onchange = renderAnnotList;
     $('#btnExportCsv').onclick = exportCsv;
     $('#btnUndo').onclick = undo;
     $('#btnRedo').onclick = redo;
@@ -1633,6 +1767,9 @@
   }
 
   // Accès pour les tests / la console
-  window.LumiPlan = { state: S, openPdfBytes, exportPdf: () => LP.exportPdf(S.pdfBytes, S.pdf, S.annots, S.images, env), setTool, goPage, buildProject, applyProject };
+  window.LumiPlan = {
+    state: S, openPdfBytes, setTool,
+    exportPdf: () => LP.exportPdf(S.cleanBytes || S.pdfBytes, S.pdf, S.annots, S.images, env),
+    exportNative: () => LP.exportNative(S.pdfBytes, S.pdf, S.annots, S.images, env, S.native), goPage, buildProject, applyProject };
   init();
 })();

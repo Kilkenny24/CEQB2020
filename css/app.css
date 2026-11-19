@@ -142,3 +142,14 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
   #main { grid-template-columns: 220px 1fr 210px; }
   #tools .lbl { display: none; }
 }
+
+#authorFilter { width: 100%; margin-bottom: 6px; }
+#annotList .item { grid-template-columns: 10px 1fr auto; }
+.thread { margin-top: 10px; border-top: 1px solid var(--border); }
+.thread .reply { background: #f7f8fa; border-radius: 5px; padding: 5px 6px; margin-bottom: 6px; }
+.thread .rh { display: flex; gap: 6px; align-items: center; margin-bottom: 3px; }
+.thread .rh small { color: var(--muted); }
+.thread .rh .state { color: var(--accent); }
+.thread .rh button { margin-left: auto; padding: 0 5px; font-size: 11px; }
+.thread textarea { width: 100%; min-height: 40px; }
+#newReply { width: 100%; min-height: 50px; margin-top: 4px; }
