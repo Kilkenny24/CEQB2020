@@ -65,7 +65,22 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 .row.small button { font-size: 11px; padding: 3px 6px; }
 #symFilter { width: 100%; margin-bottom: 6px; }
 
-.sym-cat { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; margin: 10px 0 4px; }
+.sym-cat {
+  font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; margin: 8px 0 3px;
+  display: flex; gap: 5px; align-items: center; padding: 3px 4px; border-radius: 4px; cursor: pointer; user-select: none;
+  border-top: 2px solid transparent; border-bottom: 2px solid transparent;
+}
+.sym-cat:hover { background: #f3f5f8; }
+.sym-cat .tw { width: 10px; }
+.sym-cat .cn { flex: 1; }
+.sym-cat .cc { font-weight: 400; background: #eceef1; border-radius: 8px; padding: 0 6px; }
+.sym-item { border-top: 2px solid transparent; border-bottom: 2px solid transparent; }
+.sym-item[draggable=true] { cursor: grab; }
+.sym-item.dragging { opacity: .4; }
+.drop-before { border-top-color: var(--accent) !important; }
+.drop-after { border-bottom-color: var(--accent) !important; }
+.sym-cat.drop-into, .sym-newcat.drop-into { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+.sym-newcat { margin-top: 10px; padding: 10px; text-align: center; color: var(--muted); font-size: 12px; border: 1px dashed var(--border); border-radius: 6px; }
 .sym-item {
   display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 6px;
   padding: 3px 4px; border-radius: 5px; cursor: pointer; border: 1px solid transparent;

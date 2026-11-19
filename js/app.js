@@ -1327,6 +1327,7 @@
       return def ? JSON.parse(JSON.stringify(def)) : LP.migrateSym(s);
     });
     if (migrated) await LP.store.set('library', S.library);
+    collapsedCats = new Set((await LP.store.get('collapsedCats')) || []);
     const imgs = await LP.store.get('libImages');
     S.images = Object.assign({}, imgs || {});
     loadImageEls();
@@ -1370,6 +1371,67 @@
     return [L * k, Math.max(W * k, 1.5)];
   }
 
+  /* ----- Organisation de la bibliothèque (glisser-déposer) ----- */
+  const catOf = (s) => s.cat || 'Divers';
+  let collapsedCats = new Set();
+  let dragSym = null; // { type: 'sym', id } ou { type: 'cat', cat }
+
+  // Déplace un symbole avant / après un autre ; il prend la catégorie de la cible
+  function moveSymNear(id, targetId, after) {
+    if (id === targetId) return;
+    const i = S.library.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const [sym] = S.library.splice(i, 1);
+    let j = S.library.findIndex((x) => x.id === targetId);
+    if (j < 0) { S.library.splice(i, 0, sym); return; }
+    sym.cat = catOf(S.library[j]);
+    S.library.splice(after ? j + 1 : j, 0, sym);
+  }
+  // Déplace un symbole à la fin d'une catégorie (existante ou nouvelle)
+  function moveSymToCat(id, cat) {
+    const i = S.library.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const [sym] = S.library.splice(i, 1);
+    sym.cat = cat;
+    let last = -1;
+    S.library.forEach((x, k) => { if (catOf(x) === cat) last = k; });
+    S.library.splice(last >= 0 ? last + 1 : S.library.length, 0, sym);
+    collapsedCats.delete(cat);
+  }
+  // Déplace toute une catégorie avant (ou après) une autre
+  function moveCat(cat, targetCat, after) {
+    if (cat === targetCat) return;
+    const block = S.library.filter((x) => catOf(x) === cat);
+    const rest = S.library.filter((x) => catOf(x) !== cat);
+    let j;
+    if (after) { j = -1; rest.forEach((x, k) => { if (catOf(x) === targetCat) j = k; }); j += 1; }
+    else j = rest.findIndex((x) => catOf(x) === targetCat);
+    if (j < 0) j = rest.length;
+    rest.splice(j, 0, ...block);
+    S.library = rest;
+  }
+  // Monter / descendre d'un cran (boutons ▲ ▼) ; franchit les limites de catégorie
+  function stepSym(id, dir) {
+    const i = S.library.findIndex((x) => x.id === id);
+    const sym = S.library[i];
+    const cats = [...new Set(S.library.map(catOf))];
+    const same = S.library.map((x, k) => [x, k]).filter(([x]) => catOf(x) === catOf(sym)).map(([, k]) => k);
+    const pos = same.indexOf(i);
+    if (dir < 0 && pos > 0) moveSymNear(id, S.library[same[pos - 1]].id, false);
+    else if (dir > 0 && pos < same.length - 1) moveSymNear(id, S.library[same[pos + 1]].id, true);
+    else {
+      // Passe dans la catégorie voisine
+      const ci = cats.indexOf(catOf(sym)) + dir;
+      if (ci < 0 || ci >= cats.length) return;
+      const target = cats[ci];
+      const members = S.library.filter((x) => catOf(x) === target);
+      if (dir < 0) moveSymNear(id, members[members.length - 1].id, true);
+      else moveSymNear(id, members[0].id, false);
+    }
+  }
+  function libChanged() { saveLibrary(); renderSymbolList(); }
+  function clearDropMarks() { $$('#symbolList .drop-before, #symbolList .drop-after, #symbolList .drop-into').forEach((e) => e.classList.remove('drop-before', 'drop-after', 'drop-into')); }
+
   function renderSymbolList() {
     const list = $('#symbolList');
     const f = ($('#symFilter').value || '').toLowerCase();
@@ -1377,13 +1439,49 @@
     const cats = {};
     for (const s of S.library) {
       if (f && !(`${s.name} ${s.tag} ${s.cat} ${s.inner}`.toLowerCase().includes(f))) continue;
-      (cats[s.cat || 'Divers'] = cats[s.cat || 'Divers'] || []).push(s);
+      (cats[catOf(s)] = cats[catOf(s)] || []).push(s);
     }
     for (const [cat, syms] of Object.entries(cats)) {
-      const h = document.createElement('div'); h.className = 'sym-cat'; h.textContent = cat; list.appendChild(h);
+      const collapsed = collapsedCats.has(cat) && !f;
+      const h = document.createElement('div');
+      h.className = 'sym-cat';
+      h.draggable = true;
+      h.dataset.cat = cat;
+      h.title = 'Glisser pour déplacer la catégorie · double-clic pour renommer · clic pour replier';
+      h.innerHTML = `<span class="tw">${collapsed ? '▸' : '▾'}</span><span class="cn">${esc(cat)}</span><span class="cc">${syms.length}</span>`;
+      h.addEventListener('click', () => { if (collapsedCats.has(cat)) collapsedCats.delete(cat); else collapsedCats.add(cat); LP.store.set('collapsedCats', [...collapsedCats]); renderSymbolList(); });
+      h.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        const n = prompt('Renommer la catégorie :', cat);
+        if (!n || !n.trim() || n.trim() === cat) return;
+        const nn = n.trim();
+        // Fusionne si la catégorie existe déjà
+        S.library.forEach((x) => { if (catOf(x) === cat) x.cat = nn; });
+        if (collapsedCats.delete(cat)) collapsedCats.add(nn);
+        libChanged();
+      });
+      h.addEventListener('dragstart', (e) => { dragSym = { type: 'cat', cat }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', cat); });
+      h.addEventListener('dragover', (e) => {
+        if (!dragSym) return;
+        e.preventDefault();
+        clearDropMarks();
+        if (dragSym.type === 'sym') h.classList.add('drop-into');
+        else { const r = h.getBoundingClientRect(); h.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after'); }
+      });
+      h.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (!dragSym) return;
+        if (dragSym.type === 'sym') moveSymToCat(dragSym.id, cat);
+        else moveCat(dragSym.cat, cat, h.classList.contains('drop-after'));
+        dragSym = null; clearDropMarks(); libChanged();
+      });
+      list.appendChild(h);
+      if (collapsed) continue;
       for (const s of syms) {
         const it = document.createElement('div');
         it.className = 'sym-item' + (S.currentSym && S.currentSym.id === s.id && S.tool === 'symbol' ? ' active' : '');
+        it.draggable = true;
+        it.dataset.id = s.id;
         it.appendChild(symThumb(s));
         const nm = document.createElement('div'); nm.className = 'nm';
         const dd = LP.migrateSym(s);
@@ -1392,10 +1490,28 @@
         nm.innerHTML = `${esc(s.name)}${s.tag ? ` <small>[${esc(s.tag)}]</small>` : ''}<br><small>${esc(dimTxt)}${dd.mode !== 'real' ? ' papier' : ''}</small>`;
         it.appendChild(nm);
         const acts = document.createElement('div'); acts.className = 'acts';
-        acts.innerHTML = '<button data-a="edit" title="Modifier">✎</button><button data-a="dup" title="Dupliquer (nouveau type)">⧉</button><button data-a="del" title="Supprimer">✕</button>';
+        acts.innerHTML = '<button data-a="up" title="Monter">▲</button><button data-a="down" title="Descendre">▼</button><button data-a="edit" title="Modifier">✎</button><button data-a="dup" title="Dupliquer (nouveau type)">⧉</button><button data-a="del" title="Supprimer">✕</button>';
         it.appendChild(acts);
+        it.addEventListener('dragstart', (e) => { dragSym = { type: 'sym', id: s.id }; it.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s.id); });
+        it.addEventListener('dragend', () => { it.classList.remove('dragging'); dragSym = null; clearDropMarks(); });
+        it.addEventListener('dragover', (e) => {
+          if (!dragSym) return;
+          e.preventDefault();
+          clearDropMarks();
+          const r = it.getBoundingClientRect();
+          it.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+        });
+        it.addEventListener('drop', (e) => {
+          e.preventDefault();
+          if (!dragSym) return;
+          const after = it.classList.contains('drop-after');
+          if (dragSym.type === 'sym') moveSymNear(dragSym.id, s.id, after);
+          else moveCat(dragSym.cat, catOf(s), after);
+          dragSym = null; clearDropMarks(); libChanged();
+        });
         it.addEventListener('click', (e) => {
           const a = e.target.dataset && e.target.dataset.a;
+          if (a === 'up' || a === 'down') { stepSym(s.id, a === 'up' ? -1 : 1); return libChanged(); }
           if (a === 'edit') return openSymbolDialog(s);
           if (a === 'dup') {
             const c = Object.assign({}, s, { id: 'u-' + LP.uid(), name: s.name + ' (copie)', builtin: false });
@@ -1417,6 +1533,23 @@
         list.appendChild(it);
       }
     }
+    // Zone de dépôt : nouvelle catégorie
+    const nz = document.createElement('div');
+    nz.className = 'sym-newcat';
+    nz.textContent = '＋ Déposer ici pour créer une catégorie';
+    nz.addEventListener('dragover', (e) => { if (dragSym && dragSym.type === 'sym') { e.preventDefault(); nz.classList.add('drop-into'); } });
+    nz.addEventListener('dragleave', () => nz.classList.remove('drop-into'));
+    nz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      nz.classList.remove('drop-into');
+      if (!dragSym || dragSym.type !== 'sym') return;
+      const id = dragSym.id; dragSym = null;
+      const n = prompt('Nom de la nouvelle catégorie (ex. nom du projet) :', '');
+      if (!n || !n.trim()) return;
+      moveSymToCat(id, n.trim());
+      libChanged();
+    });
+    list.appendChild(nz);
   }
 
   /* ----- Éditeur de symbole ----- */

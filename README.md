@@ -53,6 +53,14 @@ Chaque symbole a une **longueur × largeur** (ou un **diamètre** pour les forme
 - donnez un nom, une catégorie (ex. le nom du projet), une étiquette de type, une couleur, le mode et les dimensions ;
 - en modifiant un symbole, l'option *Mettre à jour les symboles déjà placés* propage le changement sur le plan.
 
+### Organiser la bibliothèque
+
+- **Glisser un symbole** vers le haut ou le bas pour le réordonner ; le déposer sur un autre groupe le **change de catégorie**.
+- **Glisser un titre de catégorie** pour déplacer tout le groupe.
+- Boutons **▲ ▼** au survol d'un symbole (même effet, sans glisser).
+- Déposer un symbole sur **« ＋ Déposer ici pour créer une catégorie »** pour créer un nouveau groupe (ex. un projet).
+- **Clic** sur une catégorie = replier / déplier ; **double-clic** = renommer (renommer avec un nom existant fusionne les deux groupes).
+
 La bibliothèque est conservée dans le navigateur. **Exporter biblio.** produit un fichier `.json` à partager avec vos collègues ou à
 réimporter sur un autre poste.
 
