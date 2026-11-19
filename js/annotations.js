@@ -152,7 +152,8 @@
     const pts = a.pts;
 
     if (a.type === 'symbol') {
-      LP.drawSymbol(R, a.sym, { x: pts[0][0], y: pts[0][1], size: a.size, rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
+      const sz = LP.symbolSize(a.sym, a, env && env.scaleFor(a.page));
+      LP.drawSymbol(R, a.sym, { x: pts[0][0], y: pts[0][1], w: sz.w, h: sz.h, provisional: sz.provisional && R.kind === 'canvas', rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
       return;
     }
 
@@ -302,12 +303,11 @@
     const filled = a.style && a.style.fill && a.style.fill !== 'none';
     switch (a.type) {
       case 'symbol': {
-        const box = LP.shapeBox(a.sym);
-        const sz = a.size || a.sym.size;
+        const sz = symSize(a);
         const r = (-(a.rot || 0) * Math.PI) / 180;
         const dx = x - p[0][0], dy = y - p[0][1];
         const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
-        return Math.abs(lx) <= (box[0] * sz) / 2 + tol && Math.abs(ly) <= Math.max((box[1] * sz) / 2, sz * 0.2) + tol;
+        return Math.abs(lx) <= sz.w / 2 + tol && Math.abs(ly) <= Math.max(sz.h / 2, 2) + tol;
       }
       case 'line': case 'arrow': case 'length': case 'calibrate':
         return distSeg(x, y, p[0], p[1]) <= tol;
@@ -346,11 +346,20 @@
     return false;
   }
 
+  // Taille d'un symbole placé, selon l'échelle de sa page (LP.env fourni par l'application)
+  function symSize(a) {
+    return LP.symbolSize(a.sym, a, LP.env ? LP.env.scaleFor(a.page) : null);
+  }
+
   function bbox(a) {
     if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
     if (a.type === 'symbol') {
-      const sz = a.size || a.sym.size;
-      return [a.pts[0][0] - sz / 2, a.pts[0][1] - sz / 2, sz, sz];
+      // Emprise du rectangle tourné
+      const sz = symSize(a);
+      const r = ((a.rot || 0) * Math.PI) / 180;
+      const ex = Math.abs((sz.w / 2) * Math.cos(r)) + Math.abs((sz.h / 2) * Math.sin(r));
+      const ey = Math.abs((sz.w / 2) * Math.sin(r)) + Math.abs((sz.h / 2) * Math.cos(r));
+      return [a.pts[0][0] - ex, a.pts[0][1] - ey, 2 * ex, 2 * ey];
     }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const q of a.pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
@@ -367,10 +376,10 @@
     let [x, y, w, h] = bbox(a);
     let m = lw * 2 + 2;
     if (a.type === 'symbol') {
-      const sz = a.size || a.sym.size;
-      const ts = Math.max(5, Math.min(sz * 0.5, 10));
+      const sz = symSize(a);
+      const ts = LP.tagSize(sz.w, sz.h);
       const tagLen = ((a.tag != null ? a.tag : a.sym.tag) || '').length;
-      return [a.pts[0][0] - sz * 0.75 - lw, a.pts[0][1] - sz * 0.75 - ts, sz * 1.5 + tagLen * ts * 0.75 + ts + 2 * lw, sz * 1.5 + ts * 2];
+      return [x - lw - 1, y - ts - lw - 1, w + tagLen * ts * 0.8 + ts + 2 * lw + 2, h + ts * 2 + 2 * lw + 2];
     }
     if (a.type === 'arrow' || a.type === 'callout') m += Math.max(lw * 4, 6);
     if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
@@ -382,7 +391,7 @@
   function describe(a, env) {
     const sc = env && env.scaleFor(a.page);
     switch (a.type) {
-      case 'symbol': return `${a.sym.name}${a.tag ? ' [' + a.tag + ']' : ''}`;
+      case 'symbol': return `${a.sym.name}${a.tag ? ' [' + a.tag + ']' : ''}${symDimText(a) ? ' — ' + symDimText(a) : ''}`;
       case 'length': {
         const d = Math.hypot(a.pts[1][0] - a.pts[0][0], a.pts[1][1] - a.pts[0][1]);
         return sc ? LP.fmtLength(d * sc.mpp, sc.unit) : 'non calibré';
@@ -396,6 +405,19 @@
     return a.comment || '';
   }
 
+  // Dimensions d'un symbole placé, en texte (ex. 4'-0" × 2'-0", Ø 6")
+  function symDimText(a, unit) {
+    const sym = LP.migrateSym(a.sym);
+    if (a.dimL == null && a.size != null) return '';
+    const mode = a.mode || sym.mode;
+    const L = a.dimL != null ? a.dimL : sym.dimL;
+    const W = a.dimW != null ? a.dimW : sym.dimW;
+    unit = unit || (LP.env && LP.env.unit ? LP.env.unit() : 'ft');
+    const paper = mode === 'paper';
+    const t = LP.isRound(sym) ? `Ø ${LP.fmtDim(L, unit, paper)}` : `${LP.fmtDim(L, unit, paper)} × ${LP.fmtDim(W, unit, paper)}`;
+    return paper ? t + ' (papier)' : t;
+  }
+
   // Valeur numérique (m ou m²) pour les exports
   function quantity(a, env) {
     const sc = env && env.scaleFor(a.page);
@@ -406,5 +428,5 @@
     return null;
   }
 
-  Object.assign(LP, { TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
+  Object.assign(LP, { symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
 })();

@@ -73,7 +73,8 @@
   const TWO_POINT = new Set(['line', 'arrow', 'rect', 'ellipse', 'cloud', 'highlight', 'text', 'length', 'calibrate']);
   const MULTI_POINT = new Set(['polyline', 'polygon', 'polylength', 'area']);
 
-  const env = { scaleFor: (p) => S.scales[p] || null };
+  const env = { scaleFor: (p) => S.scales[p] || null, unit: () => S.unit };
+  LP.env = env;
 
   /* ======================= DOM ======================= */
   const viewer = $('#viewer');
@@ -378,9 +379,28 @@
     }
     // Aperçu du symbole sous le curseur
     if (S.tool === 'symbol' && S.currentSym && hover && !drag) {
+      const sz = LP.symbolSize(S.currentSym, null, env.scaleFor(S.pageNum));
       octx.save(); octx.globalAlpha = 0.55;
-      LP.drawSymbol(R, S.currentSym, { x: hover[0], y: hover[1], size: S.currentSym.size, rot: symDefaults.rot, showTag: symDefaults.showTag, lineWidth: defaults.symbol.width });
+      LP.drawSymbol(R, S.currentSym, { x: hover[0], y: hover[1], w: sz.w, h: sz.h, provisional: sz.provisional, rot: symDefaults.rot, showTag: symDefaults.showTag, lineWidth: defaults.symbol.width });
       octx.restore();
+    }
+    // Pose par glisser : longueur et orientation suivent la souris
+    if (drag && drag.kind === 'symdrag') {
+      const r = symDragResult(drag);
+      if (r) {
+        const sz = LP.symbolSize(S.currentSym, { dimL: r.dimL }, env.scaleFor(S.pageNum));
+        octx.save(); octx.globalAlpha = 0.7;
+        LP.drawSymbol(R, S.currentSym, { x: r.center[0], y: r.center[1], w: sz.w, h: sz.h, rot: r.rot, showTag: false, lineWidth: defaults.symbol.width });
+        octx.restore();
+        const fs = 12 / S.zoom;
+        octx.save();
+        octx.font = `bold ${fs}px Helvetica, Arial, sans-serif`;
+        const t = r.label, tw = octx.measureText(t).width;
+        const lx = drag.cur[0] + 10 / S.zoom, ly = drag.cur[1] - 10 / S.zoom;
+        octx.fillStyle = 'rgba(255,255,255,.9)'; octx.fillRect(lx - 3 / S.zoom, ly - fs, tw + 6 / S.zoom, fs * 1.3);
+        octx.fillStyle = '#1f6feb'; octx.fillText(t, lx, ly);
+        octx.restore();
+      }
     }
     // Sélection
     const hr = 4 / S.zoom;
@@ -451,19 +471,52 @@
     };
   }
 
-  function placeSymbol(p) {
+  function placeSymbol(p, opt = {}) {
     const sym = S.currentSym;
     if (!sym) { toast('Choisissez un symbole dans la bibliothèque'); return; }
+    LP.migrateSym(sym);
+    if (sym.mode === 'real' && !env.scaleFor(S.pageNum)) {
+      toast("Page non calibrée : taille provisoire (cadre orange). Calibrez (K) ou choisissez l'échelle en bas.", 6000);
+    }
     const a = newAnnot('symbol', [p]);
     a.sym = symSnapshot(sym);
-    a.size = sym.size;
-    a.rot = symDefaults.rot;
+    a.mode = sym.mode;
+    a.dimL = opt.dimL != null ? opt.dimL : sym.dimL;
+    a.dimW = sym.dimW;
+    a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
     pushUndo();
     S.annots.push(a);
     changed();
   }
+  /*
+   * Pose par glisser (formes allongées) : la longueur suit la souris, arrondie
+   * au pouce (pi-po) ou au 10 mm (à l'échelle) ; 1/16" ou 1 mm sur papier.
+   */
+  function symDragResult(d) {
+    const sym = S.currentSym;
+    if (!sym || LP.isRound(LP.migrateSym(sym))) return null;
+    const dx = d.cur[0] - d.start[0], dy = d.cur[1] - d.start[1];
+    const distPt = Math.hypot(dx, dy);
+    if (distPt * S.zoom < 8) return null;
+    const sc = env.scaleFor(S.pageNum);
+    const paper = sym.mode !== 'real';
+    if (!paper && !sc) return null;
+    const IN = 0.0254;
+    const step = S.unit === 'ft' ? (paper ? IN / 16 : IN) : (paper ? 0.001 : 0.01);
+    let meters = paper ? distPt / LP.PT_PER_M : distPt * sc.mpp;
+    meters = Math.max(step, Math.round(meters / step) * step);
+    const lenPt = paper ? meters * LP.PT_PER_M : meters / sc.mpp;
+    const ux = dx / distPt, uy = dy / distPt;
+    return {
+      dimL: meters,
+      rot: (Math.atan2(dy, dx) * 180) / Math.PI,
+      center: [d.start[0] + (ux * lenPt) / 2, d.start[1] + (uy * lenPt) / 2],
+      label: LP.fmtDim(meters, S.unit, paper),
+    };
+  }
+
   function symSnapshot(sym) {
     const c = Object.assign({}, sym);
     delete c.img; // l'image est stockée une seule fois dans S.images
@@ -551,7 +604,7 @@
       refreshProps(); drawOverlay(); highlightList();
       return;
     }
-    if (tool === 'symbol') { placeSymbol(p); return; }
+    if (tool === 'symbol') { drag = { kind: 'symdrag', start: p, cur: p }; return; }
     if (tool === 'note') {
       const a = newAnnot('note', [[p[0], p[1] - LP.NOTE_SIZE]]);
       a.replies = [];
@@ -638,6 +691,9 @@
       }
       case 'box':
         drag.cur = p; drawOverlay(); break;
+      case 'symdrag':
+        drag.cur = e.shiftKey ? constrain(drag.start, p, 'line') : p;
+        drawOverlay(); break;
       case 'two':
         drawing.pts[1] = e.shiftKey ? constrain(drag.start, p, drawing.type) : p;
         drawOverlay(); break;
@@ -663,6 +719,12 @@
       case 'handle':
         if (d.moved) { pushUndo(d.snap); touch(); }
         break;
+      case 'symdrag': {
+        const r = symDragResult(d);
+        if (r) placeSymbol(r.center, { dimL: r.dimL, rot: Math.round(r.rot * 10) / 10 });
+        else placeSymbol(d.start);
+        break;
+      }
       case 'box': {
         const [x0, y0] = d.start, [x1, y1] = d.cur;
         const bx = Math.min(x0, x1), by = Math.min(y0, y1), bw = Math.abs(x1 - x0), bh = Math.abs(y1 - y0);
@@ -1043,12 +1105,28 @@
     if (allSym) {
       const sym = isDefaults ? S.currentSym : first.sym;
       const tagVal = isDefaults ? (S.currentSym ? S.currentSym.tag : '') : first.tag;
-      const sizeVal = isDefaults ? (S.currentSym ? S.currentSym.size : 16) : first.size;
+      const dsym = sym ? LP.migrateSym(sym) : null;
+      const legacy = !isDefaults && first.dimL == null && first.size != null;
+      const mode = isDefaults ? (dsym && dsym.mode) : (first.mode || (legacy ? 'paper' : dsym.mode));
+      const sz = !isDefaults ? LP.symbolSize(first.sym, first, env.scaleFor(first.page)) : null;
+      const dimL = isDefaults ? dsym && dsym.dimL : (legacy ? sz.w / LP.PT_PER_M : (first.dimL != null ? first.dimL : dsym.dimL));
+      const dimW = isDefaults ? dsym && dsym.dimW : (legacy ? sz.h / LP.PT_PER_M : (first.dimW != null ? first.dimW : dsym.dimW));
+      const round = dsym && LP.isRound(dsym);
+      const paper = mode !== 'real';
       const rotVal = isDefaults ? symDefaults.rot : first.rot || 0;
       const show = isDefaults ? symDefaults.showTag : first.showTag !== false;
       h += `<p class="hint">${sym ? esc(sym.name) : 'Aucun symbole choisi'}</p>`;
       if (!isDefaults) h += `<label>Étiquette <input type="text" data-k="tag" value="${esc(tagVal || '')}"></label>`;
-      h += `<label>Taille (pt) <input type="number" data-k="size" min="2" max="500" step="1" value="${+sizeVal || 16}"></label>
+      const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
+      h += `<label>Dimension <select data-k="mode">
+              <option value="real" ${!paper ? 'selected' : ''}>À l'échelle réelle</option>
+              <option value="paper" ${paper ? 'selected' : ''}>Taille sur papier</option></select></label>
+            <label>${round ? 'Diamètre' : 'Longueur'} <input type="text" data-k="dimL" placeholder="${esc(ph)}" value="${esc(LP.fmtDim(dimL, S.unit, paper))}"></label>
+            ${round ? '' : `<label>Largeur <input type="text" data-k="dimW" placeholder="${esc(ph)}" value="${esc(LP.fmtDim(dimW, S.unit, paper))}"></label>`}
+            <p class="hint">${paper ? 'Taille fixe sur la feuille imprimée, quelle que soit l\'échelle.'
+              : (env.scaleFor(isDefaults ? S.pageNum : first.page) ? 'Converti selon l\'échelle de la page.'
+                : '<b style="color:#c25e00">Page non calibrée</b> : taille provisoire. Calibrez (K) ou choisissez l\'échelle en bas.')}
+              ${!round && isDefaults ? '<br>Astuce : cliquer-glisser pour poser à la longueur voulue.' : ''}</p>
             <label>Rotation (°) <input type="number" data-k="rot" step="15" value="${rotVal}"></label>
             <label class="inline"><input type="checkbox" data-k="showTag" ${show ? 'checked' : ''}> Afficher l'étiquette</label>`;
       if (!isDefaults) h += `<label>Opacité <input type="number" data-k="style.opacity" min="0.1" max="1" step="0.1" value="${st.opacity ?? 1}"></label>`;
@@ -1157,7 +1235,11 @@
       if (S.tool === 'symbol') {
         if (k === 'rot') symDefaults.rot = v;
         else if (k === 'showTag') symDefaults.showTag = v;
-        else if (k === 'size' && S.currentSym) { S.currentSym.size = v; saveLibrary(); renderSymbolList(); }
+        else if (S.currentSym && (k === 'mode' || k === 'dimL' || k === 'dimW')) {
+          const sym = LP.migrateSym(S.currentSym);
+          if (!setSymDim(sym, k, v, env.scaleFor(S.pageNum), null)) return;
+          saveLibrary(); renderSymbolList(); refreshProps();
+        }
         drawOverlay();
         return;
       }
@@ -1171,6 +1253,18 @@
     if (!propSnap) propSnap = snapshot();
     clearTimeout(propSnapTimer);
     propSnapTimer = setTimeout(() => { pushUndo(propSnap); propSnap = null; }, 600);
+    if (k === 'mode' || k === 'dimL' || k === 'dimW') {
+      const snap = snapshot();
+      let ok = true;
+      for (const a of target) {
+        if (a.type !== 'symbol') continue;
+        if (!setSymDim(a, k, v, env.scaleFor(a.page), a.sym)) { ok = false; break; }
+        touch(a);
+      }
+      if (ok) pushUndo(snap); else restoreSnap(snap);
+      refreshProps(); drawOverlay(); refreshPanelsSoon();
+      return;
+    }
     for (const a of target) {
       if (k === 'nofill') {
         a.style.fill = v ? 'none' : a.style.fill && a.style.fill !== 'none' ? a.style.fill : '#ffffff';
@@ -1187,12 +1281,52 @@
     autoTimer = setTimeout(autosave, 1200);
   }
 
+  /*
+   * Modifie mode / longueur / largeur d'un symbole (définition de bibliothèque
+   * si sym = null, sinon annotation placée). Retourne false si la saisie est invalide.
+   */
+  function setSymDim(o, k, v, scale, sym) {
+    const def = LP.migrateSym(sym || o);
+    // Anciennes annotations (taille en points) : on passe en dimensions papier
+    if (sym && o.dimL == null && o.size != null) {
+      const sz = LP.symbolSize(sym, o, scale);
+      o.mode = 'paper'; o.dimL = sz.w / LP.PT_PER_M; o.dimW = sz.h / LP.PT_PER_M; delete o.size;
+    }
+    const mode = o.mode || def.mode;
+    if (k === 'mode') {
+      if (v === mode) return true;
+      // Conserve la taille visible actuelle en changeant de mode
+      const sz = LP.symbolSize(def, sym ? o : null, scale);
+      if (v === 'real' && scale && !sz.provisional) { o.dimL = sz.w * scale.mpp; o.dimW = sz.h * scale.mpp; }
+      else if (v === 'paper' && !sz.provisional) { o.dimL = sz.w / LP.PT_PER_M; o.dimW = sz.h / LP.PT_PER_M; }
+      o.mode = v;
+      return true;
+    }
+    const m = LP.parseDim(v, S.unit, mode !== 'real');
+    if (m == null || !(m > 0)) { alert(`Dimension non reconnue : « ${v} »\nExemples : 4'  48"  2'-6 1/2"  1/4"  1200 mm  0,6 m`); return false; }
+    if (sym && o.mode == null) o.mode = mode;
+    if (k === 'dimL') { if (sym && o.dimW == null) o.dimW = def.dimW; o.dimL = m; if (LP.isRound(def)) o.dimW = m; }
+    else { if (sym && o.dimL == null) o.dimL = def.dimL; o.dimW = m; }
+    return true;
+  }
+
   function saveDefaults() { LP.store.set('defaults', defaults); }
 
   /* ======================= Bibliothèque de symboles ======================= */
   async function loadLibrary() {
+    const u = await LP.store.get('unit');
+    if (u) S.unit = u;
     const lib = await LP.store.get('library');
     S.library = lib && lib.length ? lib : JSON.parse(JSON.stringify(LP.DEFAULT_SYMBOLS));
+    // Migration : anciens symboles en points → dimensions réelles / papier
+    let migrated = false;
+    S.library = S.library.map((s) => {
+      if (s.dimL != null && s.mode) return s;
+      migrated = true;
+      const def = s.builtin && LP.DEFAULT_SYMBOLS.find((d) => d.id === s.id);
+      return def ? JSON.parse(JSON.stringify(def)) : LP.migrateSym(s);
+    });
+    if (migrated) await LP.store.set('library', S.library);
     const imgs = await LP.store.get('libImages');
     S.images = Object.assign({}, imgs || {});
     loadImageEls();
@@ -1201,8 +1335,6 @@
     if (d) defaults = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STYLE)), d);
     S.author = (await LP.store.get('author')) || '';
     $('#authorInput').value = S.author;
-    const u = await LP.store.get('unit');
-    if (u) S.unit = u;
   }
   function saveLibrary() {
     LP.store.set('library', S.library);
@@ -1225,11 +1357,17 @@
     c.width = w * 2; c.height = h * 2;
     const ctx = c.getContext('2d');
     ctx.scale(2, 2);
-    const box = LP.shapeBox(sym);
-    const size = Math.min((w - 6) / box[0], (h - 6) / box[1]);
+    const [sw, sh] = fitSym(sym, w - 6, h - 6);
     const R = new LP.CanvasRenderer(ctx, S.imgEls);
-    LP.drawSymbol(R, sym, { x: w / 2, y: h / 2, size, rot: 0, showTag: false, lineWidth: Math.max(1, size / 18) });
+    LP.drawSymbol(R, sym, { x: w / 2, y: h / 2, w: sw, h: sh, rot: 0, showTag: false, lineWidth: 1 });
     return c;
+  }
+  // Proportions réelles du symbole, ajustées dans une boîte maxW × maxH
+  function fitSym(sym, maxW, maxH) {
+    const d = LP.migrateSym(sym);
+    const L = d.dimL || 1, W = LP.isRound(d) ? L : (d.dimW || L);
+    const k = Math.min(maxW / L, maxH / W);
+    return [L * k, Math.max(W * k, 1.5)];
   }
 
   function renderSymbolList() {
@@ -1248,7 +1386,10 @@
         it.className = 'sym-item' + (S.currentSym && S.currentSym.id === s.id && S.tool === 'symbol' ? ' active' : '');
         it.appendChild(symThumb(s));
         const nm = document.createElement('div'); nm.className = 'nm';
-        nm.innerHTML = `${esc(s.name)}${s.tag ? ` <small>[${esc(s.tag)}]</small>` : ''}`;
+        const dd = LP.migrateSym(s);
+        const dimTxt = LP.isRound(dd) ? `Ø ${LP.fmtDim(dd.dimL, S.unit, dd.mode !== 'real')}`
+          : `${LP.fmtDim(dd.dimL, S.unit, dd.mode !== 'real')} × ${LP.fmtDim(dd.dimW, S.unit, dd.mode !== 'real')}`;
+        nm.innerHTML = `${esc(s.name)}${s.tag ? ` <small>[${esc(s.tag)}]</small>` : ''}<br><small>${esc(dimTxt)}${dd.mode !== 'real' ? ' papier' : ''}</small>`;
         it.appendChild(nm);
         const acts = document.createElement('div'); acts.className = 'acts';
         acts.innerHTML = '<button data-a="edit" title="Modifier">✎</button><button data-a="dup" title="Dupliquer (nouveau type)">⧉</button><button data-a="del" title="Supprimer">✕</button>';
@@ -1281,13 +1422,15 @@
   /* ----- Éditeur de symbole ----- */
   const dlg = $('#symDialog');
   const form = $('#symForm');
-  let dlgSym = null, dlgIsNew = false, dlgImg = null;
+  let dlgSym = null, dlgIsNew = false, dlgImg = null, dlgOld = null;
 
   function openSymbolDialog(sym, isNew) {
     dlgIsNew = !sym || !!isNew;
     dlgSym = sym ? Object.assign({}, sym) : {
-      id: 'u-' + LP.uid(), name: '', cat: 'Luminaires', shape: 'circle', inner: '', tag: '', color: '#d00000', fill: '#ffffff', size: 16,
+      id: 'u-' + LP.uid(), name: '', cat: 'Luminaires', shape: 'rect', inner: '', tag: '', color: '#d00000', fill: '#ffffff',
+      mode: 'real', dimL: S.unit === 'ft' ? 4 * 0.3048 : 1.2, dimW: S.unit === 'ft' ? 2 * 0.3048 : 0.6,
     };
+    LP.migrateSym(dlgSym);
     dlgImg = S.images[dlgSym.id] || null;
     $('#symDialogTitle').textContent = dlgIsNew ? 'Nouveau symbole' : 'Modifier le symbole';
     const shapeSel = form.elements.shape;
@@ -1298,7 +1441,11 @@
     F.inner.value = dlgSym.inner || ''; F.tag.value = dlgSym.tag || ''; F.color.value = dlgSym.color;
     const none = !dlgSym.fill || dlgSym.fill === 'none';
     F.fill.value = none ? '#ffffff' : dlgSym.fill; F.nofill.checked = none;
-    F.size.value = dlgSym.size || 16; F.img.value = '';
+    F.mode.value = dlgSym.mode;
+    F.dimL.value = LP.fmtDim(dlgSym.dimL, S.unit, dlgSym.mode !== 'real');
+    F.dimW.value = LP.fmtDim(dlgSym.dimW, S.unit, dlgSym.mode !== 'real');
+    F.img.value = '';
+    dlgOld = { mode: dlgSym.mode, dimL: dlgSym.dimL, dimW: dlgSym.dimW, tag: dlgSym.tag };
     form.querySelector('.upd').style.display = dlgIsNew ? 'none' : '';
     updateDlg();
     dlg.showModal();
@@ -1308,14 +1455,27 @@
     Object.assign(dlgSym, {
       name: F.name.value.trim(), cat: F.cat.value.trim() || 'Divers', shape: F.shape.value,
       inner: F.inner.value, tag: F.tag.value.trim(), color: F.color.value,
-      fill: F.nofill.checked ? 'none' : F.fill.value, size: parseFloat(F.size.value) || 16,
+      fill: F.nofill.checked ? 'none' : F.fill.value, mode: F.mode.value,
     });
+    const paper = dlgSym.mode !== 'real';
+    for (const k of ['dimL', 'dimW']) {
+      const m = LP.parseDim(F[k].value, S.unit, paper);
+      F[k].setCustomValidity(m > 0 ? '' : 'Dimension non reconnue');
+      if (m > 0) dlgSym[k] = m;
+    }
+    if (LP.isRound(dlgSym)) dlgSym.dimW = dlgSym.dimL;
   }
   function updateDlg() {
     readDlg();
     const isImg = dlgSym.shape === 'image';
     form.querySelectorAll('.img-only').forEach((e) => (e.style.display = isImg ? '' : 'none'));
     form.querySelectorAll('.no-img').forEach((e) => (e.style.display = isImg ? 'none' : ''));
+    const round = LP.isRound(dlgSym);
+    form.querySelector('.dimL-lbl').textContent = round ? 'Diamètre' : 'Longueur';
+    form.querySelector('.dimW-row').style.display = round ? 'none' : '';
+    const paper = dlgSym.mode !== 'real';
+    const ph = S.unit === 'ft' ? (paper ? '1/4"' : `4'  ou  48"`) : (paper ? '6 mm' : '1200 mm');
+    form.elements.dimL.placeholder = form.elements.dimW.placeholder = ph;
     const c = $('#symPreview');
     const ctx = c.getContext('2d');
     c.width = 400; c.height = 400;
@@ -1330,11 +1490,11 @@
       imgs[dlgSym.id] = updateDlg.el;
     }
     const R = new LP.CanvasRenderer(ctx, imgs);
-    const box = LP.shapeBox(dlgSym);
-    const size = Math.min(120 / box[0], 120 / box[1]);
-    LP.drawSymbol(R, dlgSym, { x: 90, y: 105, size, showTag: true, lineWidth: size / 16 });
+    const [sw, sh] = fitSym(dlgSym, 130, 130);
+    LP.drawSymbol(R, dlgSym, { x: 90, y: 100, w: sw, h: sh, showTag: true, lineWidth: 1.5 });
     ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif';
-    ctx.fillText(`Taille réelle : ${dlgSym.size} pt`, 6, 194);
+    const dt = round ? `Ø ${LP.fmtDim(dlgSym.dimL, S.unit, paper)}` : `${LP.fmtDim(dlgSym.dimL, S.unit, paper)} × ${LP.fmtDim(dlgSym.dimW, S.unit, paper)}`;
+    ctx.fillText(`${dt} ${paper ? 'sur papier' : 'réels'}`, 6, 194);
   }
   form.addEventListener('input', updateDlg);
   form.elements.img.addEventListener('change', async () => {
@@ -1343,13 +1503,21 @@
     if (f.size > 2e6) { alert('Image trop lourde (max 2 Mo). Utilisez un PNG simple.'); return; }
     dlgImg = await LP.readFile(f, 'dataurl');
     const im = new Image();
-    im.onload = () => { dlgSym.imgAspect = im.naturalWidth / im.naturalHeight; updateDlg(); };
+    im.onload = () => {
+      dlgSym.imgAspect = im.naturalWidth / im.naturalHeight;
+      // Largeur proportionnelle à l'image
+      form.elements.dimW.value = LP.fmtDim(dlgSym.dimL / dlgSym.imgAspect, S.unit, dlgSym.mode !== 'real');
+      updateDlg();
+    };
     im.src = dlgImg;
   });
   dlg.addEventListener('close', () => {
     if (dlg.returnValue !== 'ok') return;
     readDlg();
     if (!dlgSym.name) { alert('Nom requis.'); return; }
+    if (!form.elements.dimL.checkValidity() || (!LP.isRound(dlgSym) && !form.elements.dimW.checkValidity())) {
+      alert("Dimension non reconnue. Exemples : 4'  48\"  2'-6 1/2\"  1/4\"  1200 mm"); return;
+    }
     if (dlgSym.shape === 'image') {
       if (!dlgImg) { alert('Choisissez une image.'); return; }
       S.images[dlgSym.id] = dlgImg;
@@ -1366,7 +1534,9 @@
           pushUndo();
           for (const a of placed) {
             if ((a.tag || '') === (old.tag || '')) a.tag = dlgSym.tag;
-            if (a.size === old.size) a.size = dlgSym.size;
+            // Les instances aux dimensions d'origine suivent les nouvelles dimensions
+            const sameDims = (a.dimL == null && a.size == null) || (a.mode === dlgOld.mode && a.dimL === dlgOld.dimL && a.dimW === dlgOld.dimW);
+            if (sameDims) { delete a.size; a.mode = dlgSym.mode; a.dimL = dlgSym.dimL; a.dimW = dlgSym.dimW; }
             a.sym = symSnapshot(dlgSym);
             touch(a);
           }
@@ -1390,14 +1560,18 @@
     renderPageList();
   }
 
-  function symKey(a) { return `${a.sym.id}|${a.tag || ''}`; }
+  function symDims(a) {
+    const mode = a.mode || (a.sym && a.sym.mode);
+    return mode === 'real' ? LP.symDimText(a) : '';
+  }
+  function symKey(a) { return `${a.sym.id}|${a.tag || ''}|${symDims(a)}`; }
 
   function computeCounts() {
     const m = new Map();
     for (const a of S.annots) {
       if (a.type !== 'symbol') continue;
       const k = symKey(a);
-      if (!m.has(k)) m.set(k, { name: a.sym.name, tag: a.tag || '', color: a.sym.color, page: 0, total: 0, pages: {} });
+      if (!m.has(k)) m.set(k, { name: a.sym.name + (symDims(a) ? ` (${symDims(a)})` : ''), tag: a.tag || '', color: a.sym.color, page: 0, total: 0, pages: {} });
       const e = m.get(k);
       e.total++;
       e.pages[a.page] = (e.pages[a.page] || 0) + 1;
@@ -1503,17 +1677,17 @@
     if (v === '') delete S.scales[S.pageNum];
     else {
       const p = LP.SCALE_PRESETS[+v];
-      const unit = p.label.includes('"') ? 'ft' : (S.unit === 'ft' ? 'm' : S.unit);
+      const unit = p.label.includes('"') ? 'ft' : (S.unit === 'ft' ? 'mm' : S.unit);
       S.scales[S.pageNum] = { mpp: p.mpp, unit, label: p.label };
       S.unit = unit;
     }
-    updateScaleUI(); changed();
+    updateScaleUI(); changed(); renderSymbolList(); refreshProps();
   });
   $('#unitSelect').addEventListener('change', (e) => {
     S.unit = e.target.value;
     LP.store.set('unit', S.unit);
     for (const k of Object.keys(S.scales)) S.scales[k].unit = S.unit;
-    changed();
+    changed(); renderSymbolList(); refreshProps();
   });
   $('#btnScaleAll').addEventListener('click', () => {
     const cur = S.scales[S.pageNum];

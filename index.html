@@ -132,7 +132,13 @@
         <label>Étiquette (type) <input name="tag" placeholder="ex. A, B1, L3"></label>
         <label>Couleur <input name="color" type="color" value="#d00000"></label>
         <label class="no-img">Remplissage <span><input name="fill" type="color" value="#ffffff"> <label class="inline"><input name="nofill" type="checkbox"> aucun</label></span></label>
-        <label>Taille (pt) <input name="size" type="number" min="3" max="500" step="1" value="16"></label>
+        <label>Dimension <select name="mode">
+          <option value="real">À l'échelle réelle (luminaires)</option>
+          <option value="paper">Taille sur papier (symboles schématiques)</option></select></label>
+        <label><span class="dimL-lbl">Longueur</span> <input name="dimL" required></label>
+        <label class="dimW-row">Largeur <input name="dimW"></label>
+        <p class="dim-hint">Saisie : <code>4'</code> <code>48"</code> <code>2'-6 1/2"</code> <code>1/4"</code> <code>1200 mm</code> <code>0,6 m</code>.
+          Sans unité : pouces (pi-po) ou mm, selon les unités choisies en bas de l'écran.</p>
         <label class="inline upd"><input name="updatePlaced" type="checkbox" checked> Mettre à jour les symboles déjà placés</label>
       </div>
       <canvas id="symPreview" width="200" height="200"></canvas>

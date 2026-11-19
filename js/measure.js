@@ -31,7 +31,10 @@
    */
   function parseLength(str) {
     if (!str) return null;
-    const s = String(str).trim().toLowerCase().replace(',', '.').replace(/[’′]/g, "'").replace(/[”″]/g, '"');
+    const s = String(str).trim().toLowerCase().replace(',', '.').replace(/[’′]/g, "'").replace(/[”″]/g, '"')
+      // Fractions de pouce : « 5 1/2 » → 5.5 ; « 3/16 » → 0.1875
+      .replace(/(\d+)\s+(\d+)\/(\d+)/g, (m, a, b, c) => String(+a + b / c))
+      .replace(/(\d+)\/(\d+)/g, (m, b, c) => String(b / c));
     let m;
     if ((m = s.match(/^(-?\d+(?:\.\d+)?)\s*'\s*-?\s*(\d+(?:\.\d+)?)?\s*(?:"|in)?$/))) {
       const ft = parseFloat(m[1]), inch = m[2] ? parseFloat(m[2]) : 0;

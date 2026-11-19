@@ -27,12 +27,30 @@ Fonctionne hors ligne. Les seules bibliothèques utilisées sont incluses dans `
 | Propriétés | Couleur, remplissage, épaisseur, opacité, trait, police, commentaire, auteur, dates |
 | Édition | Sélection multiple (Maj, rectangle), déplacement, poignées, Alt+glisser = dupliquer, copier/coller, annuler/rétablir |
 
+### Dimensions des symboles (pi-po ou mm, jamais en points)
+
+Chaque symbole a une **longueur × largeur** (ou un **diamètre** pour les formes rondes) en unités réelles, selon l'un de deux modes :
+
+| Mode | Usage | Exemple |
+|---|---|---|
+| **À l'échelle réelle** | Luminaires dessinés à l'échelle : la taille suit l'échelle de la page | 2×4 = `4'` × `2'` ; linéaire `1200 mm` × `75 mm` ; downlight Ø `6"` |
+| **Taille sur papier** | Symboles schématiques (détecteurs, interrupteurs, sorties) : taille fixe sur la feuille imprimée | détecteur Ø `1/4"` ; interrupteur `6 mm` |
+
+- **Calibrez d'abord la page** (outil K, ou choisissez l'échelle en bas de l'écran). Sur une page non calibrée, les symboles à l'échelle
+  s'affichent à une taille provisoire entourée d'un **cadre orange**, et prennent leur vraie taille dès que l'échelle est définie.
+- Saisie acceptée : `4'` · `48"` · `2'-6 1/2"` · `1/4"` · `1200 mm` · `0,6 m`. Un nombre sans unité est lu en **pouces** (unités pi-po)
+  ou en **mm** (unités mm/m), selon le sélecteur *Unités* en bas de l'écran.
+- **Cliquer-glisser** avec un symbole allongé (linéaire, 2×4, rail…) le pose **à la longueur tracée** et dans l'orientation du geste,
+  arrondie au pouce ou à 10 mm (Maj = angles de 15°). Un simple clic le pose à sa longueur par défaut.
+- Chaque symbole placé peut avoir ses propres dimensions (panneau *Propriétés*) ; le **décompte** sépare les longueurs différentes
+  (ex. « Linéaire DEL (4'-0" × 3") » et « (8'-0" × 3") »).
+
 ### Créer vos propres icônes
 
 **+ Nouveau symbole** (ou ✎ / ⧉ sur un symbole existant) :
 
 - choisissez une forme (cercle, carré, 2×4, linéaire, hexagone, losange, cercle + texte, etc.) **ou importez une image PNG/JPG** (icône de fabricant, pictogramme maison) ;
-- donnez un nom, une catégorie (ex. le nom du projet), une étiquette de type, une couleur et une taille en points ;
+- donnez un nom, une catégorie (ex. le nom du projet), une étiquette de type, une couleur, le mode et les dimensions ;
 - en modifiant un symbole, l'option *Mettre à jour les symboles déjà placés* propage le changement sur le plan.
 
 La bibliothèque est conservée dans le navigateur. **Exporter biblio.** produit un fichier `.json` à partager avec vos collègues ou à

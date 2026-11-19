@@ -220,7 +220,7 @@
   }
 
   function stamp(a) {
-    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.rot, a.showTag, a.sym && a.sym.id, a.markup]);
+    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.mode, a.dimL, a.dimW, a.rot, a.showTag, a.sym && a.sym.id, a.markup]);
   }
 
   // P(x, y) : espace PDF -> espace page affichée
