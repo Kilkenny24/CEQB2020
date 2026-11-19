@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LumiPlan — Annotation de plans</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">LumiPlan</div>
+  <div class="group">
+    <button id="btnOpenPdf" title="Ouvrir un PDF (Ctrl+O)">📂 Ouvrir PDF</button>
+    <button id="btnOpenProj" title="Ouvrir un projet d'annotations (.lumiplan.json)">📁 Ouvrir projet</button>
+    <button id="btnSaveProj" title="Enregistrer le projet (Ctrl+S)">💾 Enregistrer</button>
+    <button id="btnSaveProjAs" title="Enregistrer sous… (Ctrl+Maj+S)">Enregistrer sous…</button>
+    <button id="btnSaveBundle" title="Projet + PDF dans un seul fichier">Projet + PDF</button>
+  </div>
+  <div class="group">
+    <button id="btnExportPdf" title="Exporter un PDF avec les annotations aplaties">⤓ PDF annoté</button>
+    <button id="btnExportCsv" title="Exporter le décompte et la liste (CSV pour Excel)">⤓ CSV</button>
+  </div>
+  <div class="group">
+    <button id="btnUndo" title="Annuler (Ctrl+Z)">↶</button>
+    <button id="btnRedo" title="Rétablir (Ctrl+Y)">↷</button>
+  </div>
+  <div class="group">
+    <button id="btnPrev" title="Page précédente (Pg préc.)">◀</button>
+    <input id="pageInput" type="text" value="–" size="4" title="Page">
+    <span id="pageCount">/ 0</span>
+    <button id="btnNext" title="Page suivante (Pg suiv.)">▶</button>
+  </div>
+  <div class="group">
+    <button id="btnZoomOut" title="Zoom arrière (-)">−</button>
+    <span id="zoomLabel">100 %</span>
+    <button id="btnZoomIn" title="Zoom avant (+)">+</button>
+    <button id="btnFit" title="Ajuster à la fenêtre (0)">Ajuster</button>
+  </div>
+  <div class="group right">
+    <label class="author">Auteur <input id="authorInput" type="text" size="10"></label>
+    <button id="btnHelp" title="Raccourcis clavier">?</button>
+  </div>
+</header>
+
+<nav id="tools"></nav>
+
+<main id="main">
+  <aside id="left">
+    <div class="tabs">
+      <button data-tab="symbols" class="active">Symboles</button>
+      <button data-tab="list">Annotations</button>
+      <button data-tab="pages">Pages</button>
+    </div>
+    <section id="tab-symbols" class="tab active">
+      <div class="row">
+        <button id="btnNewSymbol">+ Nouveau symbole</button>
+      </div>
+      <div class="row small">
+        <button id="btnLibImport">Importer biblio.</button>
+        <button id="btnLibExport">Exporter biblio.</button>
+        <button id="btnLibReset" title="Restaurer la bibliothèque par défaut">Réinit.</button>
+      </div>
+      <input id="symFilter" type="search" placeholder="Filtrer…">
+      <div id="symbolList"></div>
+    </section>
+    <section id="tab-list" class="tab">
+      <h3>Décompte des symboles</h3>
+      <table id="countTable"><thead><tr><th>Symbole</th><th>Type</th><th>Page</th><th>Total</th></tr></thead><tbody></tbody></table>
+      <h3>Quantités mesurées</h3>
+      <table id="qtyTable"><thead><tr><th>Mesure</th><th>Page</th><th>Total</th></tr></thead><tbody></tbody></table>
+      <h3>Liste
+        <select id="listScope"><option value="page">Page courante</option><option value="all">Toutes les pages</option></select>
+      </h3>
+      <div id="annotList"></div>
+    </section>
+    <section id="tab-pages" class="tab">
+      <div id="pageList"></div>
+    </section>
+  </aside>
+
+  <div id="viewer" tabindex="0">
+    <canvas id="baseCanvas"></canvas>
+    <canvas id="overlayCanvas"></canvas>
+    <textarea id="textEditor" spellcheck="true"></textarea>
+    <div id="dropHint">
+      <div>
+        <h1>LumiPlan</h1>
+        <p>Glissez un PDF ici ou cliquez sur <b>Ouvrir PDF</b>.</p>
+        <p class="muted">Tout fonctionne localement dans votre navigateur. Aucun fichier n'est envoyé sur Internet.</p>
+      </div>
+    </div>
+  </div>
+
+  <aside id="right">
+    <h3 id="propTitle">Propriétés</h3>
+    <div id="props"></div>
+  </aside>
+</main>
+
+<footer id="status">
+  <span id="statusTool"></span>
+  <span id="statusPos"></span>
+  <span class="spacer"></span>
+  <label>Échelle
+    <select id="scaleSelect"></select>
+  </label>
+  <label>Unités
+    <select id="unitSelect">
+      <option value="ft">pi-po</option>
+      <option value="m">m</option>
+      <option value="mm">mm</option>
+    </select>
+  </label>
+  <button id="btnScaleAll" title="Appliquer l'échelle de cette page à toutes les pages">→ toutes les pages</button>
+  <span id="statusMsg"></span>
+</footer>
+
+<!-- Éditeur de symbole -->
+<dialog id="symDialog">
+  <form method="dialog" id="symForm">
+    <h2 id="symDialogTitle">Nouveau symbole</h2>
+    <div class="dlg-grid">
+      <div class="fields">
+        <label>Nom <input name="name" required></label>
+        <label>Catégorie <input name="cat" list="catList"></label>
+        <datalist id="catList"></datalist>
+        <label>Forme <select name="shape"></select></label>
+        <label class="img-only">Image <input name="img" type="file" accept="image/png,image/jpeg"></label>
+        <label class="no-img">Texte intérieur <input name="inner" placeholder="ex. DO, $, PCE"></label>
+        <label>Étiquette (type) <input name="tag" placeholder="ex. A, B1, L3"></label>
+        <label>Couleur <input name="color" type="color" value="#d00000"></label>
+        <label class="no-img">Remplissage <span><input name="fill" type="color" value="#ffffff"> <label class="inline"><input name="nofill" type="checkbox"> aucun</label></span></label>
+        <label>Taille (pt) <input name="size" type="number" min="3" max="500" step="1" value="16"></label>
+        <label class="inline upd"><input name="updatePlaced" type="checkbox" checked> Mettre à jour les symboles déjà placés</label>
+      </div>
+      <canvas id="symPreview" width="200" height="200"></canvas>
+    </div>
+    <div class="dlg-buttons">
+      <button value="cancel" formnovalidate>Annuler</button>
+      <button value="ok" id="symOk" class="primary">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Aide -->
+<dialog id="helpDialog">
+  <h2>Raccourcis</h2>
+  <div class="help-cols">
+    <table>
+      <tr><td>V</td><td>Sélection</td></tr>
+      <tr><td>H / Espace</td><td>Déplacer la vue</td></tr>
+      <tr><td>Molette</td><td>Zoom</td></tr>
+      <tr><td>L / A</td><td>Ligne / Flèche</td></tr>
+      <tr><td>R / E</td><td>Rectangle / Ellipse</td></tr>
+      <tr><td>C</td><td>Nuage de révision</td></tr>
+      <tr><td>P / G</td><td>Polyligne / Polygone</td></tr>
+      <tr><td>F</td><td>Main levée</td></tr>
+      <tr><td>I</td><td>Surligneur</td></tr>
+      <tr><td>T / Q</td><td>Texte / Bulle</td></tr>
+    </table>
+    <table>
+      <tr><td>S</td><td>Symbole (clic = placer, décompte)</td></tr>
+      <tr><td>K</td><td>Calibrer l'échelle</td></tr>
+      <tr><td>M / N / B</td><td>Longueur / Polyligne mesurée / Aire</td></tr>
+      <tr><td>Entrée, double-clic</td><td>Terminer une polyligne</td></tr>
+      <tr><td>Échap</td><td>Annuler / désélectionner</td></tr>
+      <tr><td>Suppr</td><td>Supprimer la sélection</td></tr>
+      <tr><td>Ctrl+C / V / D</td><td>Copier / Coller / Dupliquer</td></tr>
+      <tr><td>[ ]</td><td>Pivoter les symboles de 15°</td></tr>
+      <tr><td>Flèches</td><td>Déplacer (Maj = ×10)</td></tr>
+      <tr><td>Maj (en dessinant)</td><td>Contraindre à 15° / carré</td></tr>
+    </table>
+  </div>
+  <form method="dialog"><button class="primary">Fermer</button></form>
+</dialog>
+
+<input id="filePdf" type="file" accept="application/pdf,.pdf" hidden>
+<input id="fileProj" type="file" accept=".json,application/json" hidden>
+<input id="fileLib" type="file" accept=".json,application/json" hidden>
+
+<script src="vendor/pdfjs/pdf.min.js"></script>
+<script src="vendor/pdf-lib/pdf-lib.min.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/symbols.js"></script>
+<script src="js/measure.js"></script>
+<script src="js/annotations.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/exporter.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
