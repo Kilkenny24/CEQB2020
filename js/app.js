@@ -621,6 +621,12 @@
         if (e.shiftKey || e.ctrlKey) {
           if (S.sel.has(a.id)) S.sel.delete(a.id); else S.sel.add(a.id);
         } else if (!S.sel.has(a.id)) { S.sel.clear(); S.sel.add(a.id); }
+        if (pendingAction && !e.shiftKey && !e.ctrlKey) {
+          const act = pendingAction;
+          refreshProps(); drawOverlay(); highlightList();
+          runAction(act);
+          return;
+        }
         drag = { kind: 'move', last: p, snap: snapshot(), moved: false, alt: e.altKey };
         refreshProps(); drawOverlay(); highlightList();
         return;
@@ -976,6 +982,7 @@
     if (e.key === ' ') { spaceDown = true; over.style.cursor = 'grab'; e.preventDefault(); return; }
     if (e.key === 'Escape') {
       if (AR) { cancelArray(); return; }
+      if (pendingAction) { pendingAction = null; markAction(null); toast(''); return; }
       if (drawing) { drawing = null; drawOverlay(); }
       else if (S.tool !== 'select') setTool('select');
       else { S.sel.clear(); refreshProps(); drawOverlay(); }
@@ -1285,9 +1292,44 @@
       b.addEventListener('click', () => setTool(t.id));
       nav.appendChild(b);
     }
+    // Actions toujours visibles : duplication et réseaux
+    const sep = document.createElement('span'); sep.className = 'sep'; nav.appendChild(sep);
+    const ACTIONS = [
+      { id: 'dup', label: 'Dupliquer', title: 'Dupliquer la sélection (Ctrl+D)', icon: '<rect x="8" y="8" width="12" height="12" rx="1"/><path d="M4 16V5a1 1 0 011-1h11"/>' },
+      { id: 'grid', label: 'Réseau grille', title: 'Réseau grille (array grid) : colonnes × rangées à espacement donné', icon: '<rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/>' },
+      { id: 'zone', label: 'Réseau esp.', title: 'Réseau par espacement (array spacing) : remplir une pièce ou une ligne', icon: '<rect x="3" y="3" width="18" height="18" stroke-dasharray="3 2"/><circle cx="8" cy="8" r="1.6"/><circle cx="16" cy="8" r="1.6"/><circle cx="8" cy="16" r="1.6"/><circle cx="16" cy="16" r="1.6"/>' },
+    ];
+    for (const a of ACTIONS) {
+      const b = document.createElement('button');
+      b.dataset.action = a.id;
+      b.title = a.title;
+      b.innerHTML = `<svg viewBox="0 0 24 24">${a.icon}</svg><span class="lbl">${a.label}</span>`;
+      b.addEventListener('click', () => runAction(a.id));
+      nav.appendChild(b);
+    }
+  }
+  // Sans sélection : on demande de cliquer sur le modèle, puis l'action démarre
+  let pendingAction = null;
+  function markAction(id) { document.querySelectorAll('#tools [data-action]').forEach((b) => b.classList.toggle('active', b.dataset.action === id)); }
+  function runAction(id) {
+    if (!S.pdf) { toast("Ouvrez d'abord un PDF"); return; }
+    const hasSel = S.annots.some((a) => S.sel.has(a.id) && a.page === S.pageNum);
+    if (!hasSel) {
+      if (S.tool !== 'select') setTool('select');
+      pendingAction = id;
+      markAction(id);
+      toast(id === 'dup' ? 'Cliquez sur le symbole à dupliquer (Échap pour annuler)'
+        : 'Cliquez sur le symbole à répéter — pour un groupe : Maj+clic ou rectangle, puis recliquez le bouton (Échap pour annuler)', 9000);
+      return;
+    }
+    pendingAction = null;
+    markAction(null);
+    if (id === 'dup') { copySel(); paste(); }
+    else startArray(id);
   }
   function setTool(id) {
     if (AR) AR = null;
+    if (id !== 'select' && pendingAction) { pendingAction = null; markAction(null); }
     commitText();
     if (drawing && MULTI_POINT.has(drawing.type)) finishMulti();
     drawing = null;
@@ -1337,7 +1379,8 @@
     } else {
       $('#propTitle').textContent = 'Propriétés';
       box.innerHTML = `<p class="hint">Sélectionnez une annotation ou un outil pour modifier ses propriétés.</p>
-        <p class="hint"><b>Astuce éclairage :</b> calibrez l'échelle (K), puis placez vos luminaires avec l'outil Symbole (S). Le décompte par type s'affiche dans l'onglet <i>Annotations</i> et s'exporte en CSV.</p>`;
+        <p class="hint"><b>Astuce éclairage :</b> calibrez l'échelle (K), puis placez vos luminaires avec l'outil Symbole (S). Le décompte par type s'affiche dans l'onglet <i>Annotations</i> et s'exporte en CSV.</p>
+        <p class="hint"><b>Répéter des luminaires :</b> boutons <i>Dupliquer</i>, <i>Réseau grille</i> et <i>Réseau espacement</i> dans la barre d'outils (ils apparaissent aussi ici quand un symbole est sélectionné).</p>`;
       return;
     }
     $('#propTitle').textContent = title;

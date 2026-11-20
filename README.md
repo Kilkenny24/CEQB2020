@@ -54,7 +54,9 @@ Chaque symbole a une **longueur × largeur** (ou un **diamètre** pour les forme
 
 ### Dupliquer et répéter les symboles (réseaux)
 
-Sélectionnez un ou plusieurs symboles (un luminaire et son détecteur, par exemple), puis dans le panneau *Propriétés* :
+Boutons **Dupliquer**, **Réseau grille** et **Réseau esp.** à droite de la barre d'outils (aussi dans le panneau *Propriétés*
+quand un symbole est sélectionné). Sans sélection, cliquez le bouton puis le symbole à répéter. Pour un groupe (un luminaire
+et son détecteur, par exemple), sélectionnez-le d'abord (Maj+clic ou rectangle), puis cliquez le bouton :
 
 - **⧉ Dupliquer** (ou Ctrl+D, Ctrl+C / Ctrl+V, Alt+glisser).
 - **▦ Réseau grille** (*array grid*) : nombre de **colonnes × rangées**, **espacement X / Y** centre à centre en pi-po ou mm
