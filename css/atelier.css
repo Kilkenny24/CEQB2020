@@ -1,0 +1,53 @@
+/* Atelier de symboles — complète css/app.css */
+body.atelier #main { grid-template-columns: 250px 1fr 290px; }
+.pane-title { font-weight: 600; padding: 10px 10px 6px; display: flex; justify-content: space-between; align-items: center; }
+.pane-title .cc, .bank-cat .cc { font-weight: 400; background: #eceef1; border-radius: 8px; padding: 0 6px; font-size: 11px; }
+#bankFilter { margin: 0 8px 6px; width: calc(100% - 16px); }
+#bankList { padding: 0 6px 12px; }
+.bank-cat { font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; margin: 10px 4px 4px; display: flex; justify-content: space-between; }
+.bank-item { display: grid; grid-template-columns: 44px 1fr; gap: 6px; align-items: center; padding: 4px; border-radius: 5px; cursor: pointer; border: 1px solid transparent; }
+.bank-item:hover { background: #f3f5f8; }
+.bank-item.active { background: var(--accent-soft); border-color: var(--accent); }
+.bank-item canvas { width: 44px; height: 34px; }
+.bank-item small { color: var(--muted); }
+
+#center { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; background: #e9ebee; }
+#editorBar, #statusbar { display: flex; gap: 12px; align-items: center; padding: 5px 10px; background: #fafbfc; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+#statusbar { border-top: 1px solid var(--border); border-bottom: 0; font-size: 12px; color: var(--muted); }
+#editorBar .spacer, #statusbar .spacer { flex: 1; }
+#stMsg { color: var(--accent); }
+#stage { position: relative; min-height: 0; overflow: hidden; }
+#ed { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#stage.dragover { box-shadow: inset 0 0 0 4px var(--accent); }
+#emptyHint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); pointer-events: none; }
+
+body.atelier #right { padding: 6px 10px 16px; }
+body.atelier #right h3 small { text-transform: none; font-weight: 400; }
+#symProps label, #primProps label { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 6px; margin-bottom: 5px; }
+#symProps label.inline, #primProps label.inline { display: flex; gap: 6px; }
+#symProps input[type=text], #primProps input[type=text], #symProps select, #primProps select, #primProps input[type=number] { width: 100%; }
+#primProps .crow { display: flex; gap: 4px; align-items: center; }
+#primProps .crow select { flex: 1; }
+#primProps input[type=color], #symProps input[type=color] { width: 36px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 3px; }
+#primProps .btns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+#primProps .btns button { font-size: 12px; padding: 3px 7px; }
+#layers .ly { display: grid; grid-template-columns: 18px 1fr auto; gap: 4px; align-items: center; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+#layers .ly:hover { background: #f3f5f8; }
+#layers .ly.sel { background: var(--accent-soft); }
+#layers .ly button { padding: 0 4px; font-size: 11px; border: 0; background: transparent; }
+#layers .ly.hidden span { opacity: .45; text-decoration: line-through; }
+#preview { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+#preview .pv { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+#preview canvas { border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+#preview small { color: var(--muted); font-size: 11px; }
+#pvThumb { width: 80px; height: 64px; }
+#pvPlan { width: 240px; height: 120px; }
+
+.img-grid { display: grid; grid-template-columns: 240px 320px; gap: 16px; }
+.img-opts label { display: block; margin-bottom: 10px; }
+.img-opts label.inline { display: flex; gap: 6px; }
+#imgPreview { border: 1px solid var(--border); border-radius: 6px; width: 320px; height: 320px;
+  background: repeating-conic-gradient(#e6e8eb 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+#pickList { max-height: 50vh; overflow: auto; min-width: 380px; margin: 8px 0; }
+#pickList label { display: flex; gap: 8px; align-items: center; padding: 3px 2px; }
+#pickList canvas { width: 40px; height: 30px; }

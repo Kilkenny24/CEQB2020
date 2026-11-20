@@ -1340,7 +1340,7 @@
   function saveLibrary() {
     LP.store.set('library', S.library);
     const used = {};
-    for (const s of S.library) if (s.shape === 'image' && S.images[s.id]) used[s.id] = S.images[s.id];
+    for (const s of S.library) for (const id of LP.symImageIds(s)) if (S.images[id]) used[id] = S.images[id];
     LP.store.set('libImages', used);
   }
   function loadImageEls() {
@@ -1567,7 +1567,9 @@
     dlgImg = S.images[dlgSym.id] || null;
     $('#symDialogTitle').textContent = dlgIsNew ? 'Nouveau symbole' : 'Modifier le symbole';
     const shapeSel = form.elements.shape;
-    shapeSel.innerHTML = Object.entries(LP.SHAPES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+    // « Composé » : seulement pour un symbole déjà dessiné dans l'Atelier
+    shapeSel.innerHTML = Object.entries(LP.SHAPES).filter(([k]) => k !== 'custom' || dlgSym.shape === 'custom')
+      .map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
     $('#catList').innerHTML = [...new Set(S.library.map((s) => s.cat))].map((c) => `<option value="${esc(c)}">`).join('');
     const F = form.elements;
     F.name.value = dlgSym.name; F.cat.value = dlgSym.cat || ''; F.shape.value = dlgSym.shape;
@@ -1836,7 +1838,7 @@
 
   function buildProject(withPdf) {
     const usedImg = {};
-    for (const a of S.annots) if (a.type === 'symbol' && S.images[a.sym.id]) usedImg[a.sym.id] = S.images[a.sym.id];
+    for (const a of S.annots) if (a.type === 'symbol') for (const id of LP.symImageIds(a.sym)) if (S.images[id]) usedImg[id] = S.images[id];
     const p = {
       format: 'lumiplan-project', version: 1,
       pdf: { name: S.fileName, fingerprint: S.fingerprint, numPages: S.numPages },
@@ -2017,7 +2019,7 @@
     $('#fileProj').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openProjectFile(f); };
     $('#btnLibExport').onclick = () => {
       const data = { format: 'lumiplan-library', version: 1, symbols: S.library, images: {} };
-      for (const s of S.library) if (S.images[s.id]) data.images[s.id] = S.images[s.id];
+      for (const s of S.library) for (const id of LP.symImageIds(s)) if (S.images[id]) data.images[id] = S.images[id];
       LP.saveBlob(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }), 'bibliotheque-symboles.lumiplan-lib.json');
     };
     $('#btnLibImport').onclick = () => $('#fileLib').click();
@@ -2063,9 +2065,29 @@
     new ResizeObserver(resize).observe(viewer);
   }
 
+  // Symboles envoyés par l'Atelier (même navigateur) : rechargement à chaud
+  function listenAtelier() {
+    try {
+      const bc = new BroadcastChannel('lumiplan');
+      bc.onmessage = async (e) => {
+        if (!e.data || e.data.type !== 'library-updated') return;
+        const lib = await LP.store.get('library');
+        const imgs = await LP.store.get('libImages');
+        if (!lib) return;
+        S.library = lib;
+        Object.assign(S.images, imgs || {});
+        loadImageEls();
+        S.currentSym = (S.currentSym && S.library.find((x) => x.id === S.currentSym.id)) || S.library[0] || null;
+        renderSymbolList();
+        toast(`Bibliothèque mise à jour depuis l'Atelier (${e.data.count || 0} symbole(s))`, 5000);
+      };
+    } catch (err) { /* BroadcastChannel indisponible : import par fichier */ }
+  }
+
   async function init() {
     buildToolbar();
     bind();
+    listenAtelier();
     await loadLibrary();
     renderSymbolList();
     setTool('select');

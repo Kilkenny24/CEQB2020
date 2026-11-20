@@ -125,10 +125,109 @@
       draw(R, s, w, h) { innerText(R, s, w, h, 1); } },
     image: { label: 'Image importée (PNG/JPG)', aspect: 1,
       draw(R, s, w, h) { R.image(s.id, -w / 2, -h / 2, w, h); } },
+    custom: { label: 'Composé (Atelier de symboles)', aspect: 1,
+      draw(R, s, w, h) { drawPrims(R, s.prims || [], s, w, h); } },
   };
 
+  /*
+   * Symboles composés (Atelier) : liste d'éléments en coordonnées normalisées
+   * (-0,5…0,5 sur la longueur et la largeur, y vers le bas).
+   *   line / poly {pts, closed} / rect {pts:[a,b]} / ellipse {pts:[a,b]}
+   *   circle {c, r} et arc {c, r, a0, a1} : r relatif à la plus petite dimension (jamais étirés)
+   *   path {segs:[['M',x,y],['L',x,y],['C',x1,y1,x2,y2,x,y],['Z']]}
+   *   text {p, text, size, bold, align}  — « {tag} » est remplacé par l'étiquette
+   *   image {pts:[a,b], img, opacity}    — img = identifiant dans la table d'images
+   * Couleurs : 'sym' = couleur du symbole, 'none', ou #rrggbb. Épaisseur en points.
+   */
+  function primColor(c, s) { return !c || c === 'none' ? null : c === 'sym' ? s.color : c; }
+  function arcPath(R, cx, cy, r, a0, a1, moveFirst) {
+    let start = (a0 * Math.PI) / 180, end = (a1 * Math.PI) / 180;
+    if (end < start) end += 2 * Math.PI;
+    const n = Math.max(1, Math.ceil((end - start) / (Math.PI / 2)));
+    const step = (end - start) / n;
+    const k = (4 / 3) * Math.tan(step / 4);
+    let x0 = cx + r * Math.cos(start), y0 = cy + r * Math.sin(start);
+    if (moveFirst) R.moveTo(x0, y0); else R.lineTo(x0, y0);
+    for (let i = 0; i < n; i++) {
+      const t0 = start + i * step, t1 = t0 + step;
+      const x1 = cx + r * Math.cos(t1), y1 = cy + r * Math.sin(t1);
+      R.curveTo(x0 - k * r * Math.sin(t0), y0 + k * r * Math.cos(t0), x1 + k * r * Math.sin(t1), y1 - k * r * Math.cos(t1), x1, y1);
+      x0 = x1; y0 = y1;
+    }
+  }
+  function drawPrims(R, prims, s, w, h) {
+    const m = Math.min(w, h);
+    const X = (x) => x * w, Y = (y) => y * h;
+    for (const p of prims) {
+      if (p.hidden) continue;
+      const stroke = primColor(p.stroke, s), fill = primColor(p.fill, s);
+      R.save();
+      if (p.opacity != null && p.opacity < 1) R.setAlpha(p.opacity);
+      const lw = Math.max(0.05, (p.width != null ? p.width : 1) * (s.lw || 1));
+      R.setLineWidth(lw);
+      R.setDash(p.dash === 'dash' ? [lw * 4, lw * 3] : p.dash === 'dot' ? [0.001, lw * 2.5] : []);
+      if (stroke) R.setStroke(stroke);
+      const paint = (canFill) => R.paint(canFill ? fill : null, !!stroke);
+      R.beginPath();
+      switch (p.t) {
+        case 'line':
+          R.moveTo(X(p.pts[0][0]), Y(p.pts[0][1])); R.lineTo(X(p.pts[1][0]), Y(p.pts[1][1])); paint(false); break;
+        case 'poly':
+          R.polyPath(p.pts.map((q) => [X(q[0]), Y(q[1])]), !!p.closed); paint(!!p.closed); break;
+        case 'rect': {
+          const x0 = Math.min(p.pts[0][0], p.pts[1][0]), y0 = Math.min(p.pts[0][1], p.pts[1][1]);
+          R.rectPath(X(x0), Y(y0), Math.abs(X(p.pts[1][0] - p.pts[0][0])), Math.abs(Y(p.pts[1][1] - p.pts[0][1]))); paint(true); break;
+        }
+        case 'ellipse': {
+          const [a, b] = p.pts;
+          R.ellipsePath(X((a[0] + b[0]) / 2), Y((a[1] + b[1]) / 2), Math.abs(X(b[0] - a[0])) / 2, Math.abs(Y(b[1] - a[1])) / 2); paint(true); break;
+        }
+        case 'circle':
+          R.ellipsePath(X(p.c[0]), Y(p.c[1]), p.r * m, p.r * m); paint(true); break;
+        case 'arc':
+          if (p.pie) { R.moveTo(X(p.c[0]), Y(p.c[1])); arcPath(R, X(p.c[0]), Y(p.c[1]), p.r * m, p.a0, p.a1, false); R.closePath(); paint(true); }
+          else { arcPath(R, X(p.c[0]), Y(p.c[1]), p.r * m, p.a0, p.a1, true); paint(false); }
+          break;
+        case 'path': {
+          let closed = false;
+          for (const g of p.segs) {
+            if (g[0] === 'M') R.moveTo(X(g[1]), Y(g[2]));
+            else if (g[0] === 'L') R.lineTo(X(g[1]), Y(g[2]));
+            else if (g[0] === 'C') R.curveTo(X(g[1]), Y(g[2]), X(g[3]), Y(g[4]), X(g[5]), Y(g[6]));
+            else if (g[0] === 'Z') { R.closePath(); closed = true; }
+          }
+          paint(closed || !!p.fill && p.fill !== 'none');
+          break;
+        }
+        case 'text': {
+          const str = String(p.text || '').replace(/\{tag\}/g, s.tag || '');
+          if (str) {
+            const size = (p.size || 0.4) * m;
+            const tw = R.measure(str, size, !!p.bold);
+            const x = X(p.p[0]) - (p.align === 'left' ? 0 : p.align === 'right' ? tw : tw / 2);
+            R.text(str, x, Y(p.p[1]), size, primColor(p.stroke, s) || s.color, !!p.bold);
+          }
+          break;
+        }
+        case 'image': {
+          const [a, b] = p.pts;
+          R.image(p.img, X(Math.min(a[0], b[0])), Y(Math.min(a[1], b[1])), Math.abs(X(b[0] - a[0])), Math.abs(Y(b[1] - a[1])));
+          break;
+        }
+      }
+      R.restore();
+    }
+  }
+  // Identifiants des images utilisées par un symbole
+  function symImageIds(sym) {
+    if (!sym) return [];
+    if (sym.shape === 'image') return [sym.id];
+    if (sym.shape === 'custom') return [...new Set((sym.prims || []).filter((p) => p.t === 'image' && p.img).map((p) => p.img))];
+    return [];
+  }
+
   function shapeOf(sym) { return SHAPES[sym.shape] || SHAPES.circle; }
-  function isRound(sym) { return !!shapeOf(sym).round; }
+  function isRound(sym) { return sym.shape === 'custom' ? !!sym.round : !!shapeOf(sym).round; }
 
   /*
    * Taille d'un symbole placé, en points de page.
@@ -179,6 +278,9 @@
       fill: sym.fill && sym.fill !== 'none' ? sym.fill : null,
       inner: sym.inner || '',
       id: sym.id,
+      prims: sym.prims,
+      tag: (o.tag != null ? o.tag : sym.tag) || '',
+      lw: o.primLineScale || 1,
     };
     R.save();
     if (o.opacity != null && o.opacity < 1) R.setAlpha(o.opacity);
@@ -280,5 +382,5 @@
 
   window.LP = window.LP || {};
   const LP = window.LP;
-  Object.assign(LP, { SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
+  Object.assign(LP, { drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
 })();

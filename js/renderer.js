@@ -184,5 +184,5 @@
   Object.assign(PdfRenderer.prototype, shared);
 
   window.LP = window.LP || {};
-  Object.assign(window.LP, { CanvasRenderer, PdfRenderer, hexToRgb });
+  Object.assign(window.LP, { CanvasRenderer, PdfRenderer, hexToRgb, RendererShared: shared });
 })();

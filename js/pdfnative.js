@@ -350,10 +350,12 @@
     const fontBold = await doc.embedFont(L.StandardFonts.HelveticaBold);
     const imgRefs = {};
     for (const a of annots) {
-      if (a.type === 'symbol' && a.sym.shape === 'image' && images[a.sym.id] && !imgRefs[a.sym.id]) {
-        const [head, b64] = images[a.sym.id].split(',');
+      if (a.type !== 'symbol') continue;
+      for (const id of LP.symImageIds(a.sym)) {
+        if (imgRefs[id] || !images[id]) continue;
+        const [head, b64] = images[id].split(',');
         const bytes = LP.base64ToBytes(b64);
-        imgRefs[a.sym.id] = (/image\/png/.test(head) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
+        imgRefs[id] = (/image\/png/.test(head) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
       }
     }
     const imported = (nativeInfo && nativeInfo.importedRefs) || new Set();

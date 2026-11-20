@@ -172,3 +172,6 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 .dim-hint { color: var(--muted); font-size: 11px; margin: -2px 0 8px; line-height: 1.5; }
 .dim-hint code { background: #f0f2f5; padding: 0 3px; border-radius: 3px; }
 .sym-item .nm small { font-size: 10.5px; }
+
+a.btnlink { font: inherit; padding: 4px 9px; border: 1px solid var(--border); background: #fff; border-radius: 5px; color: var(--text); text-decoration: none; white-space: nowrap; }
+a.btnlink:hover { background: #f0f2f5; }

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atelier de symboles — LumiPlan</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/atelier.css">
+</head>
+<body class="atelier">
+<header id="topbar">
+  <div class="brand">Atelier de symboles</div>
+  <div class="group">
+    <button id="btnNew" title="Nouveau symbole (Ctrl+N)">＋ Nouveau</button>
+    <button id="btnDupSym" title="Dupliquer le symbole">⧉ Dupliquer</button>
+    <button id="btnDelSym" title="Supprimer le symbole de la banque">✕ Supprimer</button>
+  </div>
+  <div class="group">
+    <button id="btnImportFile" title="Importer une banque ou une bibliothèque LumiPlan (.json)">📂 Importer</button>
+    <button id="btnFromLumi" title="Reprendre des symboles de LumiPlan pour les modifier">⇠ Depuis LumiPlan</button>
+  </div>
+  <div class="group">
+    <button id="btnSendOne" class="primary" title="Ajouter / mettre à jour ce symbole dans LumiPlan (même navigateur)">⇢ Envoyer à LumiPlan</button>
+    <button id="btnSendAll" title="Envoyer toute la banque dans LumiPlan (même navigateur)">⇢ Tout envoyer</button>
+    <button id="btnExport" title="Exporter la banque en fichier (à importer dans LumiPlan : Importer biblio.)">⤓ Exporter la banque</button>
+  </div>
+  <div class="group">
+    <button id="btnUndo" title="Annuler (Ctrl+Z)">↶</button>
+    <button id="btnRedo" title="Rétablir (Ctrl+Y)">↷</button>
+  </div>
+  <div class="group right">
+    <a class="btnlink" href="index.html" target="_blank">↩ LumiPlan</a>
+  </div>
+</header>
+
+<nav id="tools"></nav>
+
+<main id="main">
+  <aside id="left">
+    <div class="pane-title">Banque de symboles <span id="bankCount" class="cc"></span></div>
+    <input id="bankFilter" type="search" placeholder="Filtrer…">
+    <div id="bankList"></div>
+  </aside>
+
+  <section id="center">
+    <div id="editorBar">
+      <label>Grille <select id="gridSel">
+        <option value="4">4</option><option value="8">8</option><option value="16" selected>16</option><option value="24">24</option><option value="32">32</option>
+      </select></label>
+      <label class="inline"><input id="snapChk" type="checkbox" checked> Magnétisme</label>
+      <label title="Les épaisseurs de trait sont montrées telles qu'elles paraîtront sur un plan à cette échelle">Échelle de référence <select id="refScale"></select></label>
+      <span class="spacer"></span>
+      <button id="btnImg" title="Ajouter une photo ou une image (PNG, JPG, WebP)">🖼 Image / photo</button>
+      <button id="btnSvg" title="Importer un dessin vectoriel SVG">✒ SVG</button>
+      <button id="btnRecolor" title="Toutes les couleurs → couleur du symbole (recolorable dans LumiPlan)">🎨 Couleur du symbole</button>
+    </div>
+    <div id="stage"><canvas id="ed"></canvas><div id="emptyHint">Créez un symbole avec <b>＋ Nouveau</b>, ou choisissez-en un dans la banque.</div></div>
+    <div id="statusbar"><span id="stTool"></span><span class="spacer"></span><span id="stPos"></span><span id="stMsg"></span></div>
+  </section>
+
+  <aside id="right">
+    <h3>Symbole</h3>
+    <div id="symProps"></div>
+    <h3>Élément sélectionné</h3>
+    <div id="primProps"></div>
+    <h3>Éléments <small>(du dessus vers le dessous)</small></h3>
+    <div id="layers"></div>
+    <h3>Aperçu</h3>
+    <div id="preview">
+      <div class="pv"><canvas id="pvThumb" width="80" height="64"></canvas><small>Bibliothèque</small></div>
+      <div class="pv"><canvas id="pvPlan" width="240" height="120"></canvas><small id="pvPlanLbl">Sur le plan (300 %)</small></div>
+    </div>
+  </aside>
+</main>
+
+<!-- Traitement d'image -->
+<dialog id="imgDialog">
+  <h2>Image / photo</h2>
+  <div class="img-grid">
+    <div class="img-opts">
+      <label>Taille maximale <select id="imgMax"><option>256</option><option>512</option><option selected>1024</option><option>2048</option></select> px</label>
+      <label class="inline"><input id="imgBg" type="checkbox"> Retirer le fond blanc</label>
+      <label>Tolérance <input id="imgTol" type="range" min="2" max="120" value="30"></label>
+      <label class="inline"><input id="imgTrim" type="checkbox" checked> Rogner les marges vides</label>
+      <label class="inline"><input id="imgGray" type="checkbox"> Noir et blanc</label>
+      <p class="hint" id="imgInfo"></p>
+    </div>
+    <canvas id="imgPreview" width="320" height="320"></canvas>
+  </div>
+  <div class="dlg-buttons">
+    <button id="imgCancel">Annuler</button>
+    <button id="imgOk" class="primary">Insérer dans le symbole</button>
+  </div>
+</dialog>
+
+<!-- Choix depuis LumiPlan -->
+<dialog id="pickDialog">
+  <h2>Reprendre des symboles de LumiPlan</h2>
+  <p class="hint">Les formes standard sont converties en éléments modifiables. Les symboles déjà composés sont copiés tels quels.</p>
+  <div id="pickList"></div>
+  <div class="dlg-buttons">
+    <button id="pickAll">Tout cocher</button>
+    <button id="pickCancel">Annuler</button>
+    <button id="pickOk" class="primary">Ajouter à la banque</button>
+  </div>
+</dialog>
+
+<input id="fileBank" type="file" accept=".json,application/json" hidden>
+<input id="fileImg" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+<input id="fileSvg" type="file" accept=".svg,image/svg+xml" hidden>
+<svg id="svgSandbox" width="0" height="0" style="position:absolute;left:-9999px;top:-9999px"></svg>
+
+<script src="js/renderer.js"></script>
+<script src="js/measure.js"></script>
+<script src="js/symbols.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/atelier.js"></script>
+</body>
+</html>

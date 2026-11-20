@@ -64,6 +64,38 @@ Chaque symbole a une **longueur × largeur** (ou un **diamètre** pour les forme
 La bibliothèque est conservée dans le navigateur. **Exporter biblio.** produit un fichier `.json` à partager avec vos collègues ou à
 réimporter sur un autre poste.
 
+## Atelier de symboles (`atelier.html`)
+
+Outil compagnon pour dessiner des **symboles avancés** et se bâtir une **banque** réutilisable. Ouvrez `atelier.html`
+(double-clic, ou bouton **🎨 Atelier de symboles** dans LumiPlan).
+
+**Dessiner**
+- Éléments : ligne, polyligne, polygone, courbe lisse, rectangle, ellipse, cercle (reste rond même si le symbole est
+  allongé), arc / secteur, texte. Couleur de trait et de remplissage, épaisseur en points, tirets, opacité, ordre, miroir,
+  rotation 90°, duplication, masquage ; grille avec magnétisme ; Maj = angles de 15° / carré.
+- Couleur « **du symbole** » : l'élément prend la couleur choisie dans LumiPlan (recolorable). « Couleur fixe » sinon.
+- Texte **`{tag}`** : affiche l'étiquette du luminaire (A, B1…) à l'intérieur du symbole.
+- Dimensions réelles (à l'échelle ou taille papier) comme dans LumiPlan ; l'éditeur montre les épaisseurs telles qu'elles
+  paraîtront sur un plan à l'*échelle de référence* choisie, et l'aperçu montre le symbole sur le plan.
+
+**Importer**
+- **Images et photos** (PNG, JPG, WebP, GIF, BMP — bouton, glisser-déposer ou **Ctrl+V** d'une capture d'écran) :
+  réduction automatique (256 à 2048 px), **retrait du fond blanc** avec tolérance, rognage des marges, noir et blanc.
+  Une image se combine avec des traits et du texte dans le même symbole.
+- **SVG** (pictogrammes de fabricants, dessins Illustrator / Inkscape) : chemins avec courbes et arcs, rectangles,
+  cercles, ellipses, lignes, polygones, textes ; transformations et styles appliqués.
+- **Depuis LumiPlan** : n'importe quel symbole de la bibliothèque, converti en éléments modifiables.
+- **Fichier** de banque ou de bibliothèque LumiPlan (`.json`).
+
+**Transférer vers LumiPlan**
+- **⇢ Envoyer à LumiPlan / Tout envoyer** : écrit directement dans la bibliothèque de LumiPlan, qui se met à jour
+  immédiatement même s'il est déjà ouvert. Fonctionne dans **Chrome et Edge** (même navigateur, même ordinateur).
+  Renvoyer un symbole modifié met à jour celui de LumiPlan (même identifiant).
+- **⤓ Exporter la banque** : fichier `.json` à importer dans LumiPlan (*Importer biblio.*) — pour Firefox, un autre poste
+  ou un collègue.
+
+La banque est conservée dans le navigateur ; exportez-la régulièrement comme sauvegarde.
+
 ## Enregistrer
 
 | Bouton | Résultat |
@@ -122,6 +154,7 @@ js/exporter.js      export PDF aplati (pdf-lib)
 js/pdfnative.js     import / export des annotations PDF natives (auteurs, réponses)
 js/storage.js       IndexedDB, enregistrement de fichiers
 js/app.js           visionneuse, outils, panneaux, fichiers
+atelier.html        Atelier de symboles (css/atelier.css, js/atelier.js)
 vendor/             pdf.js et pdf-lib (licences incluses) ; pdf.worker.src.js = worker pdf.js sous forme
                     de chaîne pour démarrer un Web Worker même en double-cliquant sur index.html
 ```

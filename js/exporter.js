@@ -55,12 +55,14 @@
         },
       };
       for (const a of list) {
-        if (a.type === 'symbol' && a.sym.shape === 'image' && !res.images[a.sym.id] && images[a.sym.id]) {
-          if (!embedded[a.sym.id]) {
-            const { bytes, png } = dataUrlBytes(images[a.sym.id]);
-            embedded[a.sym.id] = png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+        if (a.type !== 'symbol') continue;
+        for (const id of LP.symImageIds(a.sym)) {
+          if (res.images[id] || !images[id]) continue;
+          if (!embedded[id]) {
+            const { bytes, png } = dataUrlBytes(images[id]);
+            embedded[id] = png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
           }
-          res.images[a.sym.id] = page.node.newXObject('LPIm', embedded[a.sym.id].ref);
+          res.images[id] = page.node.newXObject('LPIm', embedded[id].ref);
         }
       }
 
