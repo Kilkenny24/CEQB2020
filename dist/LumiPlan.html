@@ -2541,6 +2541,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     S.pageNum = n;
     S.page = await S.pdf.getPage(n);
     S.vp = S.page.getViewport({ scale: 1 });
+    AR = null; // un réseau en cours ne suit pas le changement de page
     S.sel.clear();
     hi = null;
     const sameSize = goPage.lastSize && Math.abs(goPage.lastSize[0] - S.vp.width) < 1 && Math.abs(goPage.lastSize[1] - S.vp.height) < 1;
@@ -2742,6 +2743,26 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
         }
       }
     }
+    // Réseau : zone tracée et copies fantômes
+    if (AR) {
+      octx.save();
+      const z = AR.zone;
+      if (AR.kind === 'zone' && z.p0 && z.p1) {
+        octx.strokeStyle = '#7a2cc9'; octx.lineWidth = 1.5 / S.zoom; octx.setLineDash([6 / S.zoom, 4 / S.zoom]);
+        octx.fillStyle = 'rgba(122,44,201,.06)';
+        if (z.line) { octx.beginPath(); octx.moveTo(...z.p0); octx.lineTo(...z.p1); octx.stroke(); }
+        else {
+          const x = Math.min(z.p0[0], z.p1[0]), y = Math.min(z.p0[1], z.p1[1]), w = Math.abs(z.p1[0] - z.p0[0]), h = Math.abs(z.p1[1] - z.p0[1]);
+          octx.fillRect(x, y, w, h); octx.strokeRect(x, y, w, h);
+        }
+        octx.setLineDash([]);
+      }
+      if (!AR.awaiting) {
+        octx.globalAlpha = 0.55;
+        for (const pos of arrayPositions()) for (const b of placedCopies(pos, true)) LP.drawAnnotation(R, b, env);
+      }
+      octx.restore();
+    }
     if (drag && drag.kind === 'box') {
       const [x, y] = drag.start, [x2, y2] = drag.cur;
       octx.fillStyle = 'rgba(31,111,235,.08)'; octx.strokeStyle = '#1f6feb';
@@ -2907,6 +2928,11 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     }
     if (e.button !== 0) return;
 
+    if (AR && AR.awaiting) {
+      drag = { kind: 'arrayzone', start: p, line: e.shiftKey };
+      AR.zone.p0 = p; AR.zone.p1 = p; AR.zone.line = e.shiftKey;
+      return;
+    }
     const tool = S.tool;
     if (tool === 'select') {
       const h = handleHit(...p);
@@ -3015,6 +3041,9 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       case 'symdrag':
         drag.cur = e.shiftKey ? constrain(drag.start, p, 'line') : p;
         drawOverlay(); break;
+      case 'arrayzone':
+        AR.zone.p1 = drag.line ? constrain(drag.start, p, 'line') : p;
+        drawOverlay(); break;
       case 'two':
         drawing.pts[1] = e.shiftKey ? constrain(drag.start, p, drawing.type) : p;
         drawOverlay(); break;
@@ -3040,6 +3069,13 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       case 'handle':
         if (d.moved) { pushUndo(d.snap); touch(); }
         break;
+      case 'arrayzone': {
+        const z = AR.zone;
+        if (Math.hypot(z.p1[0] - z.p0[0], z.p1[1] - z.p0[1]) * S.zoom < 6) { z.p0 = z.p1 = null; toast('Zone trop petite : tracez-la en glissant'); break; }
+        AR.awaiting = false;
+        refreshProps(); drawOverlay();
+        break;
+      }
       case 'symdrag': {
         const r = symDragResult(d);
         if (r) placeSymbol(r.center, { dimL: r.dimL, rot: Math.round(r.rot * 10) / 10 });
@@ -3260,6 +3296,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     }
     if (e.key === ' ') { spaceDown = true; over.style.cursor = 'grab'; e.preventDefault(); return; }
     if (e.key === 'Escape') {
+      if (AR) { cancelArray(); return; }
       if (drawing) { drawing = null; drawOverlay(); }
       else if (S.tool !== 'select') setTool('select');
       else { S.sel.clear(); refreshProps(); drawOverlay(); }
@@ -3297,6 +3334,211 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   window.addEventListener('keyup', (e) => {
     if (e.key === ' ') { spaceDown = false; updateCursor(hover); }
   });
+
+  /* ======================= Réseaux (array grid / array spacing) ======================= */
+  /*
+   * AR = null ou {
+   *   kind: 'grid' | 'zone',
+   *   src: annotations modèles, c: centre du modèle (pt page),
+   *   grid: { cols, rows, sx, sy, angle }           (sx, sy en mètres)
+   *   zone: { p0, p1, line, by: 'spacing'|'count', sx, sy, cols, rows, orient, keep }
+   *   awaiting: true tant que la zone n'est pas tracée
+   * }
+   */
+  let AR = null;
+  const IN_M = 0.0254, FT_M = 0.3048;
+  function defaultSpacing() { return S.unit === 'ft' ? 8 * FT_M : 2.4; }
+
+  function startArray(kind) {
+    const src = S.annots.filter((a) => S.sel.has(a.id) && a.page === S.pageNum);
+    if (!src.length) { toast("Sélectionnez d'abord le ou les symboles à répéter"); return; }
+    if (!env.scaleFor(S.pageNum)) {
+      alert("Le réseau utilise des distances réelles : calibrez d'abord la page (outil K) ou choisissez l'échelle en bas de l'écran.");
+      return;
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const a of src) { const [x, y, w, h] = LP.bboxAnnotation(a); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h); }
+    const sp = defaultSpacing();
+    AR = {
+      kind, src, c: [(x0 + x1) / 2, (y0 + y1) / 2],
+      grid: { cols: 3, rows: 3, sx: sp, sy: sp, angle: 0 },
+      zone: { by: 'spacing', sx: sp, sy: sp, cols: 3, rows: 2, orient: true, keep: false },
+      awaiting: kind === 'zone',
+    };
+    if (kind === 'zone') toast('Tracez la zone (rectangle) à remplir — Maj : tracer une ligne (corridor, rangée)', 8000);
+    refreshProps(); drawOverlay();
+  }
+  function cancelArray() { AR = null; refreshProps(); drawOverlay(); }
+
+  // Positions (centres, en points de page) et rotation éventuelle des copies
+  function arrayPositions() {
+    if (!AR) return [];
+    const sc = env.scaleFor(S.pageNum);
+    if (!sc) return [];
+    const m2pt = (m) => m / sc.mpp;
+    const out = [];
+    if (AR.kind === 'grid') {
+      const g = AR.grid;
+      const a = (g.angle * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+      for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+        if (!r && !c) continue; // l'original occupe la première cellule
+        const dx = c * m2pt(g.sx), dy = r * m2pt(g.sy);
+        out.push({ x: AR.c[0] + dx * ca - dy * sa, y: AR.c[1] + dx * sa + dy * ca });
+      }
+      return out;
+    }
+    const z = AR.zone;
+    if (!z.p0 || !z.p1) return [];
+    // Répartition sur une longueur L : par espacement (même distance aux deux extrémités) ou par nombre (demi-espacement aux murs)
+    const dist = (L, s, n) => {
+      if (z.by === 'count') { const k = Math.max(1, n); return Array.from({ length: k }, (_, i) => ((i + 0.5) * L) / k); }
+      const sp = Math.max(m2pt(s), 1e-6);
+      const k = Math.max(1, Math.round(L / sp));
+      const start = (L - (k - 1) * sp) / 2;
+      return Array.from({ length: k }, (_, i) => start + i * sp);
+    };
+    if (z.line) {
+      const dx = z.p1[0] - z.p0[0], dy = z.p1[1] - z.p0[1], L = Math.hypot(dx, dy);
+      if (L < 1) return [];
+      const ux = dx / L, uy = dy / L;
+      const rot = (Math.atan2(dy, dx) * 180) / Math.PI;
+      for (const t of dist(L, z.sx, z.cols)) out.push({ x: z.p0[0] + ux * t, y: z.p0[1] + uy * t, rot: z.orient ? rot : null });
+      return out;
+    }
+    const x0 = Math.min(z.p0[0], z.p1[0]), y0 = Math.min(z.p0[1], z.p1[1]);
+    const W = Math.abs(z.p1[0] - z.p0[0]), H = Math.abs(z.p1[1] - z.p0[1]);
+    for (const ty of dist(H, z.sy, z.rows)) for (const tx of dist(W, z.sx, z.cols)) out.push({ x: x0 + tx, y: y0 + ty });
+    return out;
+  }
+  // Copie fantôme / définitive du modèle centrée sur une position
+  function placedCopies(pos, ghost) {
+    return AR.src.map((a) => {
+      const b = ghost ? Object.assign({}, a) : JSON.parse(JSON.stringify(a));
+      const dx = pos.x - AR.c[0], dy = pos.y - AR.c[1];
+      b.pts = a.pts.map((q) => [q[0] + dx, q[1] + dy]);
+      if (pos.rot != null && b.type === 'symbol') b.rot = Math.round(pos.rot * 10) / 10;
+      return b;
+    });
+  }
+  function applyArray() {
+    const pos = arrayPositions();
+    if (!pos.length) { toast('Aucune copie à créer'); return; }
+    if (pos.length > 2000 && !confirm(`${pos.length} copies vont être créées. Continuer ?`)) return;
+    pushUndo();
+    const created = [];
+    for (const p of pos) for (const b of placedCopies(p, false)) {
+      const c = cloneAnnot(b);
+      c.page = S.pageNum;
+      created.push(c);
+    }
+    // Réseau par zone : le modèle sert de gabarit (supprimé sauf demande contraire)
+    if (AR.kind === 'zone' && !AR.zone.keep) {
+      const ids = new Set(AR.src.map((a) => a.id));
+      S.annots = S.annots.filter((a) => !ids.has(a.id));
+    }
+    S.annots.push(...created);
+    S.sel = new Set(created.map((a) => a.id));
+    if (AR.kind === 'grid') AR.src.forEach((a) => S.sel.add(a.id));
+    const n = created.length;
+    AR = null;
+    changed(); refreshProps();
+    toast(`${n} copie(s) créée(s)`);
+  }
+
+  function arrayPanel() {
+    const fm = (m) => LP.fmtDim(m, S.unit, false);
+    const pos = arrayPositions();
+    const nSrc = AR.src.length;
+    let h = `<p class="hint">Modèle : ${nSrc === 1 ? esc(LP.describeAnnotation(AR.src[0], env) || LP.TYPE_LABELS[AR.src[0].type]) : nSrc + ' annotations'}</p>`;
+    const ph = S.unit === 'ft' ? `ex. 8' ou 8'-6"` : 'ex. 2400 mm';
+    if (AR.kind === 'grid') {
+      const g = AR.grid;
+      h += `<label>Colonnes <input type="number" data-ar="grid.cols" min="1" max="200" step="1" value="${g.cols}"></label>
+        <label>Rangées <input type="number" data-ar="grid.rows" min="1" max="200" step="1" value="${g.rows}"></label>
+        <label>Espacement X <input type="text" data-ar="grid.sx" placeholder="${esc(ph)}" value="${esc(fm(g.sx))}"></label>
+        <label>Espacement Y <input type="text" data-ar="grid.sy" placeholder="${esc(ph)}" value="${esc(fm(g.sy))}"></label>
+        <label>Angle (°) <input type="number" data-ar="grid.angle" step="15" value="${g.angle}"></label>
+        <p class="hint">Distances centre à centre. Une valeur négative répète vers la gauche / le haut.</p>`;
+    } else if (AR.awaiting) {
+      h += `<p class="hint"><b>Tracez la zone</b> à remplir sur le plan (glisser).<br>Maj enfoncée : tracer une <b>ligne</b> (corridor, rangée continue).</p>`;
+    } else {
+      const z = AR.zone;
+      const L = (a, b) => Math.abs(b - a) * env.scaleFor(S.pageNum).mpp;
+      const zoneTxt = z.line ? `Ligne : ${fm(Math.hypot(z.p1[0] - z.p0[0], z.p1[1] - z.p0[1]) * env.scaleFor(S.pageNum).mpp)}`
+        : `Zone : ${fm(L(z.p0[0], z.p1[0]))} × ${fm(L(z.p0[1], z.p1[1]))}`;
+      h += `<p class="hint">${zoneTxt} <button data-ar-act="redraw">Retracer</button></p>
+        <label>Répartir par <select data-ar="zone.by"><option value="spacing" ${z.by === 'spacing' ? 'selected' : ''}>Espacement</option><option value="count" ${z.by === 'count' ? 'selected' : ''}>Nombre</option></select></label>`;
+      if (z.by === 'spacing') {
+        h += `<label>Espacement ${z.line ? '' : 'X'} <input type="text" data-ar="zone.sx" placeholder="${esc(ph)}" value="${esc(fm(z.sx))}"></label>`;
+        if (!z.line) h += `<label>Espacement Y <input type="text" data-ar="zone.sy" placeholder="${esc(ph)}" value="${esc(fm(z.sy))}"></label>`;
+      } else {
+        h += `<label>${z.line ? 'Nombre' : 'Colonnes'} <input type="number" data-ar="zone.cols" min="1" max="200" step="1" value="${z.cols}"></label>`;
+        if (!z.line) h += `<label>Rangées <input type="number" data-ar="zone.rows" min="1" max="200" step="1" value="${z.rows}"></label>`;
+      }
+      if (z.line) h += `<label class="inline"><input type="checkbox" data-ar="zone.orient" ${z.orient ? 'checked' : ''}> Orienter les symboles le long de la ligne</label>`;
+      h += `<label class="inline"><input type="checkbox" data-ar="zone.keep" ${z.keep ? 'checked' : ''}> Conserver le modèle d'origine</label>`;
+      // Résultat calculé : espacement réel et distance aux murs
+      if (pos.length) {
+        const sc = env.scaleFor(S.pageNum);
+        if (z.line) {
+          const Lpt = Math.hypot(z.p1[0] - z.p0[0], z.p1[1] - z.p0[1]);
+          const n = pos.length, step = n > 1 ? Math.hypot(pos[1].x - pos[0].x, pos[1].y - pos[0].y) : 0;
+          const edge = Math.hypot(pos[0].x - z.p0[0], pos[0].y - z.p0[1]);
+          h += `<p class="hint"><b>${n}</b> copie(s)${n > 1 ? ` à ${fm(step * sc.mpp)} c/c` : ''}, à ${fm(edge * sc.mpp)} des extrémités${Lpt ? '' : ''}.</p>`;
+        } else {
+          const xs = [...new Set(pos.map((q) => Math.round(q.x * 1000)))].length, ys = [...new Set(pos.map((q) => Math.round(q.y * 1000)))].length;
+          const x0 = Math.min(z.p0[0], z.p1[0]), y0 = Math.min(z.p0[1], z.p1[1]);
+          const mx = Math.min(...pos.map((q) => q.x)) - x0, my = Math.min(...pos.map((q) => q.y)) - y0;
+          const stx = xs > 1 ? (Math.max(...pos.map((q) => q.x)) - Math.min(...pos.map((q) => q.x))) / (xs - 1) : 0;
+          const sty = ys > 1 ? (Math.max(...pos.map((q) => q.y)) - Math.min(...pos.map((q) => q.y))) / (ys - 1) : 0;
+          h += `<p class="hint"><b>${xs} × ${ys} = ${pos.length}</b> copie(s)<br>c/c : ${xs > 1 ? fm(stx * sc.mpp) : '—'} × ${ys > 1 ? fm(sty * sc.mpp) : '—'}<br>Aux murs : ${fm(mx * sc.mpp)} (côtés) · ${fm(my * sc.mpp)} (haut/bas)</p>`;
+        }
+      }
+    }
+    if (AR.kind === 'grid') h += `<p class="hint"><b>${pos.length + 1}</b> au total (${pos.length} copie(s) + l'original).</p>`;
+    h += `<div class="row"><button class="primary" data-ar-act="apply" ${pos.length ? '' : 'disabled'}>Appliquer</button><button data-ar-act="cancel">Annuler</button></div>`;
+    return h;
+  }
+  function bindArrayPanel(box) {
+    box.querySelectorAll('[data-ar]').forEach((el) => {
+      const [grp, key] = el.dataset.ar.split('.');
+      const evt = el.type === 'text' ? 'change' : 'input';
+      el.addEventListener(evt, () => {
+        if (!AR) return;
+        const o = AR[grp];
+        if (el.type === 'checkbox') o[key] = el.checked;
+        else if (el.tagName === 'SELECT') { o[key] = el.value; refreshProps(); drawOverlay(); return; }
+        else if (el.type === 'number') { const v = parseFloat(el.value); if (!isFinite(v)) return; o[key] = key === 'angle' ? v : Math.max(1, Math.min(200, Math.round(v))); }
+        else {
+          const t = el.value.trim();
+          const neg = t.startsWith('-');
+          const m = LP.parseDim(neg ? t.slice(1) : t, S.unit, false);
+          if (!(m > 0)) { alert(`Distance non reconnue : « ${el.value} »\nExemples : 8'  8'-6"  96"  2400 mm`); refreshProps(); return; }
+          o[key] = neg ? -m : m;
+        }
+        refreshArrayInfo();
+        drawOverlay();
+      });
+    });
+    box.querySelectorAll('[data-ar-act]').forEach((b) => b.addEventListener('click', () => {
+      const a = b.dataset.arAct;
+      if (a === 'apply') applyArray();
+      else if (a === 'cancel') cancelArray();
+      else if (a === 'redraw') { AR.awaiting = true; AR.zone.p0 = AR.zone.p1 = null; refreshProps(); drawOverlay(); }
+    }));
+  }
+  // Met à jour le texte calculé sans reconstruire les champs (garde le focus)
+  function refreshArrayInfo() {
+    const box = $('#props');
+    const active = document.activeElement;
+    const key = active && active.dataset ? active.dataset.ar : null;
+    const sel = active && active.selectionStart;
+    refreshProps();
+    if (key) {
+      const el = box.querySelector(`[data-ar="${key}"]`);
+      if (el) { el.focus(); try { if (sel != null) el.setSelectionRange(sel, sel); } catch (e) { /* champ numérique */ } }
+    }
+  }
 
   function deleteSel() {
     pushUndo();
@@ -3366,6 +3608,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     }
   }
   function setTool(id) {
+    if (AR) AR = null;
     commitText();
     if (drawing && MULTI_POINT.has(drawing.type)) finishMulti();
     drawing = null;
@@ -3396,6 +3639,12 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
 
   function refreshProps() {
     const box = $('#props');
+    if (AR) {
+      $('#propTitle').textContent = AR.kind === 'grid' ? 'Réseau — grille' : 'Réseau — par espacement';
+      box.innerHTML = arrayPanel();
+      bindArrayPanel(box);
+      return;
+    }
     const sel = S.annots.filter((a) => S.sel.has(a.id));
     let target, title, isDefaults = false;
     if (sel.length) {
@@ -3481,6 +3730,9 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
         });
         h += `<textarea id="newReply" placeholder="Écrire une réponse…"></textarea><div class="row"><button id="btnReply" class="primary">Répondre</button></div></div>`;
       }
+      h += `<div class="row"><button data-act="dup" title="Dupliquer (Ctrl+D) — ou Alt+glisser">⧉ Dupliquer</button>
+            <button data-act="argrid" title="Répéter en rangées × colonnes à espacement donné">▦ Réseau grille</button>
+            <button data-act="arzone" title="Remplir une pièce ou une ligne selon un espacement ou un nombre">⬚ Réseau espacement</button></div>`;
       h += `<div class="row"><button data-act="front">Premier plan</button><button data-act="back">Arrière-plan</button><button data-act="del">Supprimer</button></div>`;
       if (!allSym) h += `<div class="row"><button data-act="setdef">Définir comme style par défaut</button></div>`;
     }
@@ -3535,6 +3787,9 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
         S.annots = act === 'front' ? rest.concat(moving) : moving.concat(rest);
         changed();
       }
+      if (act === 'dup') { copySel(); paste(); }
+      if (act === 'argrid') startArray('grid');
+      if (act === 'arzone') startArray('zone');
       if (act === 'setdef') {
         for (const a of target) defaults[a.type] = Object.assign({}, a.style);
         saveDefaults();

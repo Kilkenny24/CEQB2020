@@ -52,6 +52,23 @@ Chaque symbole a une **longueur × largeur** (ou un **diamètre** pour les forme
 - Chaque symbole placé peut avoir ses propres dimensions (panneau *Propriétés*) ; le **décompte** sépare les longueurs différentes
   (ex. « Linéaire DEL (4'-0" × 3") » et « (8'-0" × 3") »).
 
+### Dupliquer et répéter les symboles (réseaux)
+
+Sélectionnez un ou plusieurs symboles (un luminaire et son détecteur, par exemple), puis dans le panneau *Propriétés* :
+
+- **⧉ Dupliquer** (ou Ctrl+D, Ctrl+C / Ctrl+V, Alt+glisser).
+- **▦ Réseau grille** (*array grid*) : nombre de **colonnes × rangées**, **espacement X / Y** centre à centre en pi-po ou mm
+  (`8'`, `8'-6"`, `2400 mm` ; valeur négative = vers la gauche / le haut) et angle. L'original occupe la première cellule.
+- **⬚ Réseau espacement** (*array spacing*) : tracez la **pièce** (rectangle) ou, avec **Maj**, une **ligne** (corridor,
+  rangée continue), puis répartissez :
+  - **par espacement** (ex. 8'-0" c/c) : le nombre est calculé et le groupe est centré (même distance aux deux murs) ;
+  - **par nombre** (ex. 4 × 2) : l'espacement est calculé avec un **demi-espacement aux murs**.
+  Le panneau affiche le nombre de copies, l'espacement réel et la distance aux murs. Sur une ligne, les symboles peuvent
+  s'orienter le long de celle-ci. Le modèle d'origine est retiré (case à cocher pour le conserver).
+
+Un aperçu s'affiche sur le plan pendant le réglage ; **Appliquer** crée les copies (Ctrl+Z pour annuler), **Échap** abandonne.
+La page doit être calibrée.
+
 ### Créer vos propres icônes
 
 **+ Nouveau symbole** (ou ✎ / ⧉ sur un symbole existant) :
