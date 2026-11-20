@@ -6,9 +6,16 @@ les fichiers ne quittent jamais votre poste.
 
 ## Démarrer
 
-1. Téléchargez le dossier (ou `git clone`).
-2. Double-cliquez sur **`index.html`** — il s'ouvre dans votre navigateur (Chrome ou Edge recommandés).
-3. Glissez un PDF dans la fenêtre ou cliquez sur **Ouvrir PDF**.
+**Le plus simple — versions autonomes (un seul fichier chacune) :** dans le dossier `dist/`, double-cliquez sur
+**`LumiPlan.html`** ou **`Atelier.html`**. Ces fichiers contiennent tout (mise en forme, scripts, bibliothèques) :
+ils fonctionnent même copiés seuls sur le bureau, sur une clé USB ou envoyés par courriel. Gardez-les dans le même
+dossier pour que les liens LumiPlan ↔ Atelier fonctionnent.
+
+**Version à dossiers (développement) :** `index.html` et `atelier.html` à la racine ont besoin des dossiers `css/`, `js/`
+et `vendor/` à côté d'eux. **Décompressez d'abord le .zip** (clic droit → *Extraire tout…*) : ouvert directement depuis le
+zip, la page s'affiche sans mise en forme — un message l'explique désormais.
+
+Chrome ou Edge recommandés. Glissez un PDF dans la fenêtre ou cliquez sur **Ouvrir PDF**.
 
 Fonctionne hors ligne. Les seules bibliothèques utilisées sont incluses dans `vendor/` :
 [pdf.js](https://github.com/mozilla/pdf.js) 3.11.174 (Apache 2.0, Mozilla) pour l'affichage et
@@ -155,6 +162,8 @@ js/pdfnative.js     import / export des annotations PDF natives (auteurs, répon
 js/storage.js       IndexedDB, enregistrement de fichiers
 js/app.js           visionneuse, outils, panneaux, fichiers
 atelier.html        Atelier de symboles (css/atelier.css, js/atelier.js)
+dist/               versions autonomes (fichier unique) — régénérer avec : node tools/build-autonome.js
+tools/              script de construction des versions autonomes
 vendor/             pdf.js et pdf-lib (licences incluses) ; pdf.worker.src.js = worker pdf.js sous forme
                     de chaîne pour démarrer un Web Worker même en double-cliquant sur index.html
 ```

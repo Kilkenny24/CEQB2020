@@ -5,6 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LumiPlan — Annotation de plans</title>
 <link rel="stylesheet" href="css/app.css">
+<script id="loadCheck">
+  // Affiché seulement si les dossiers css/ js/ vendor/ sont introuvables
+  window.addEventListener('load', function () {
+    if (window.LP && window.LP.drawSymbol) return;
+    var d = document.createElement('div');
+    d.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#fff;color:#1f2328;font:16px/1.5 Segoe UI,Arial,sans-serif;padding:40px;overflow:auto');
+    d.innerHTML = '<h1 style="color:#b42318;margin-top:0">Fichiers manquants</h1>' +
+      '<p>Cette page a besoin des dossiers <b>css</b>, <b>js</b> et <b>vendor</b> placés à côté d\'elle, et ils sont introuvables.</p>' +
+      '<p><b>Cause habituelle :</b> la page a été ouverte directement depuis le fichier .zip.</p>' +
+      '<ol><li>Clic droit sur le .zip → <b>Extraire tout…</b></li><li>Ouvrir le dossier extrait, puis double-cliquer sur la page.</li></ol>' +
+      '<p>Plus simple : utilisez les versions <b>autonomes</b> du dossier <b>dist</b> (<b>LumiPlan.html</b> et <b>Atelier.html</b>), qui fonctionnent seules.</p>';
+    document.body.appendChild(d);
+  });
+</script>
 </head>
 <body>
 <header id="topbar">
