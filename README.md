@@ -100,6 +100,9 @@ La page doit être calibrée.
 - `eclairage-urgence.lumiplan-lib.json` : 17 symboles d'éclairage d'urgence (phares simples / doubles muraux et plafond,
   accumulateurs, indicateurs d'issue simples / doubles, muraux / plafond, avec ou sans flèche), en taille papier, catégorie
   *Urgence*. **Importer** dans l'onglet Symboles ; modifiables dans l'Atelier. Régénérer : `node tools/gen-urgence.js`.
+- `appareils-exterieurs.lumiplan-lib.json` : 9 appareils extérieurs (applique murale, cylindre mural, luminaires sur fût
+  simple / double / triple / quadruple, bollard, colonne lumineuse en taille papier ; luminaire mural 1' × 2' à l'échelle),
+  catégorie *Appareils extérieurs*. Régénérer : `node tools/gen-exterieur.js`.
 
 ### Organiser la bibliothèque
 
