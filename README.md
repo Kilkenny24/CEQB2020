@@ -95,6 +95,12 @@ La page doit être calibrée.
 - donnez un nom, une catégorie (ex. le nom du projet), une étiquette de type, une couleur, le mode et les dimensions ;
 - en modifiant un symbole, l'option *Mettre à jour les symboles déjà placés* propage le changement sur le plan.
 
+### Bibliothèques prêtes à importer (`bibliotheques/`)
+
+- `eclairage-urgence.lumiplan-lib.json` : 17 symboles d'éclairage d'urgence (phares simples / doubles muraux et plafond,
+  accumulateurs, indicateurs d'issue simples / doubles, muraux / plafond, avec ou sans flèche), en taille papier, catégorie
+  *Urgence*. **Importer** dans l'onglet Symboles ; modifiables dans l'Atelier. Régénérer : `node tools/gen-urgence.js`.
+
 ### Organiser la bibliothèque
 
 - **Glisser un symbole** vers le haut ou le bas pour le réordonner ; le déposer sur un autre groupe le **change de catégorie**.
