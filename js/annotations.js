@@ -12,7 +12,7 @@
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -157,17 +157,25 @@
       const ov = env && env.ext && env.ext.symColor ? env.ext.symColor(a) : null;
       const sym = ov ? Object.assign({}, a.sym, { color: ov }) : a.sym;
       LP.drawSymbol(R, sym, { x: pts[0][0], y: pts[0][1], w: sz.w, h: sz.h, provisional: sz.provisional && R.kind === 'canvas', rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
-      if (env && env.ext && env.ext.showCircuit && a.circuit) {
-        // Circuit inscrit sous le luminaire
-        const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 8));
-        const t = String(a.circuit);
-        const w = R.measure(t, fs, false);
+      // Inscriptions sous le symbole : circuit, hauteur de montage
+      const under = [];
+      if (env && env.ext && env.ext.showCircuit && a.circuit) under.push(String(a.circuit));
+      if (env && env.ext && env.ext.showHeight) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
+      if (under.length) {
+        const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 7));
         const r = ((a.rot || 0) * Math.PI) / 180;
         const ey = Math.abs((sz.w / 2) * Math.sin(r)) + Math.abs((sz.h / 2) * Math.cos(r));
         R.save();
-        R.text(t, pts[0][0] - w / 2, pts[0][1] + ey + fs * 1.05, fs, ov || '#333333', false);
+        under.forEach((t, i) => {
+          const w = R.measure(t, fs, false);
+          R.text(t, pts[0][0] - w / 2, pts[0][1] + ey + fs * (1.05 + i * 1.15), fs, ov || '#333333', false);
+        });
         R.restore();
       }
+      return;
+    }
+    if (a.type === 'cable') {
+      drawCable(R, a, env);
       return;
     }
     if (a.type === 'schedule') {
@@ -341,6 +349,11 @@
         const [bx, by, bw, bh] = bbox(a);
         return x >= bx - tol && x <= bx + bw + tol && y >= by - tol && y <= by + bh + tol;
       }
+      case 'cable': {
+        const g = cableGeom(a, LP.env);
+        for (let i = 1; i < g.pts.length; i++) if (distSeg(x, y, g.pts[i - 1], g.pts[i]) <= tol + 1) return true;
+        return false;
+      }
       case 'markup':
         for (let i = 0; i + 3 < p.length; i += 4) if (inPoly(x, y, [p[i], p[i + 1], p[i + 3], p[i + 2]])) return true;
         return false;
@@ -366,6 +379,68 @@
       }
     }
     return false;
+  }
+
+  /*
+   * Câble entre deux composantes : courbe de Bézier légère. Plusieurs câbles entre les
+   * mêmes composantes sont répartis de part et d'autre, de plus en plus écartés.
+   * Les extrémités suivent les symboles reliés (a.from / a.to).
+   */
+  function cableGeom(a, env) {
+    const ext = (env && env.ext) || {};
+    const A = ext.byId ? ext.byId(a.from) : null, B = ext.byId ? ext.byId(a.to) : null;
+    const p0 = A ? A.pts[0] : a.pts[0], p1 = B ? B.pts[0] : a.pts[1];
+    a.pts = [[p0[0], p0[1]], [p1[0], p1[1]]];
+    const lane = ext.cableLane ? ext.cableLane(a) : 0;
+    // Sens de référence commun à la paire (indépendant de l'ordre de tracé)
+    const flip = String(a.from) > String(a.to) ? -1 : 1;
+    const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * flip, ny = (dx / L) * flip;
+    const o = (lane % 2 ? -1 : 1) * 0.12 * (1 + Math.floor(lane / 2)) * (a.bend != null ? a.bend : 1);
+    const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+    const q = [mx + nx * 2 * o * L, my + ny * 2 * o * L];
+    const c1 = [p0[0] + (2 / 3) * (q[0] - p0[0]), p0[1] + (2 / 3) * (q[1] - p0[1])];
+    const c2 = [p1[0] + (2 / 3) * (q[0] - p1[0]), p1[1] + (2 / 3) * (q[1] - p1[1])];
+    const pts = [];
+    let len = 0;
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24, u = 1 - t;
+      const p = [u * u * p0[0] + 2 * u * t * q[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * q[1] + t * t * p1[1]];
+      if (i) len += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+      pts.push(p);
+    }
+    // Étiquette décalée le long de la courbe selon le rang (évite les chevauchements entre câbles voisins)
+    const tl = 0.5 + (lane % 2 ? -1 : 1) * 0.14 * Math.ceil(lane / 2);
+    const lbl = pts[Math.max(2, Math.min(22, Math.round(tl * 24)))];
+    return { p0, p1, q, c1, c2, pts, len, mid: pts[12], lbl, orphan: !A || !B };
+  }
+  function drawCable(R, a, env) {
+    const g = cableGeom(a, env);
+    const ext = (env && env.ext) || {};
+    const st = ext.cableStyle ? ext.cableStyle(a.ctype) : { color: '#333333', width: 0.8, dash: [] };
+    const w = st.width * (a.style && a.style.width ? a.style.width : 1);
+    R.save();
+    if (a.style && a.style.opacity != null && a.style.opacity < 1) R.setAlpha(a.style.opacity);
+    R.setStroke(st.color);
+    R.setLineWidth(w);
+    R.setDash((st.dash || []).map((d) => d * w));
+    R.beginPath();
+    R.moveTo(g.p0[0], g.p0[1]);
+    R.curveTo(g.c1[0], g.c1[1], g.c2[0], g.c2[1], g.p1[0], g.p1[1]);
+    R.stroke();
+    R.setDash([]);
+    if (g.orphan) { // extrémité dont le symbole a disparu
+      R.setFill('#c2341b'); R.beginPath(); R.ellipsePath(g.p1[0], g.p1[1], 2, 2); R.fill();
+    }
+    if (ext.cableLabels) {
+      let t = ext.cableLabel ? ext.cableLabel(a) : String(a.ctype || '');
+      const fs = 4.5;
+      const tw = R.measure(t, fs, true), pad = 1;
+      R.setFill('#ffffff');
+      R.beginPath(); R.rectPath(g.lbl[0] - tw / 2 - pad, g.lbl[1] - fs * 0.85 - pad, tw + 2 * pad, fs * 1.15 + pad); R.fill();
+      R.text(t, g.lbl[0] - tw / 2, g.lbl[1], fs, st.color, true);
+    }
+    R.restore();
   }
 
   /*
@@ -462,6 +537,12 @@
   function bbox(a) {
     if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
     if (a.type === 'schedule') { const L = scheduleLayout(a, LP.env, null); return [a.pts[0][0], a.pts[0][1], L.w, L.h]; }
+    if (a.type === 'cable') {
+      const g = cableGeom(a, LP.env);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const q of g.pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
+      return [x0, y0, x1 - x0, y1 - y0];
+    }
     if (a.type === 'symbol') {
       // Emprise du rectangle tourné
       const sz = symSize(a);
@@ -488,12 +569,13 @@
       const sz = symSize(a);
       const ts = LP.tagSize(sz.w, sz.h);
       const tagLen = ((a.tag != null ? a.tag : a.sym.tag) || '').length;
-      const circ = a.circuit ? 12 : 0; // circuit inscrit sous le luminaire
+      const circ = 22; // circuit et hauteur inscrits sous le luminaire
       return [x - lw - 1 - circ, y - ts - lw - 1, w + tagLen * ts * 0.8 + ts + 2 * lw + 2 + 2 * circ, h + ts * 2 + 2 * lw + 2 + circ];
     }
     if (a.type === 'arrow' || a.type === 'callout') m += Math.max(lw * 4, 6);
     if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
     if (['length', 'calibrate', 'polylength', 'area'].includes(a.type)) m += (s.fontSize || 9) * 7;
+    if (a.type === 'cable') m += 30; // étiquette du câble
     return [x - m, y - m, w + 2 * m, h + 2 * m];
   }
 
@@ -511,6 +593,7 @@
       case 'text': case 'callout': return (a.text || '').slice(0, 60);
       case 'note': return (a.comment || '').slice(0, 60);
       case 'schedule': return a.scope === 'page' ? 'page courante' : 'tout le projet';
+      case 'cable': return LP.env && LP.env.ext && LP.env.ext.cableLabel ? LP.env.ext.cableLabel(a, true) : String(a.ctype || '');
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
     }
     return a.comment || '';
@@ -539,5 +622,5 @@
     return null;
   }
 
-  Object.assign(LP, { symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
+  Object.assign(LP, { cableGeom, symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
 })();

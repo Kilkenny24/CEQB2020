@@ -188,6 +188,7 @@
     // 2. Annotations reportées (copies indépendantes, sans lien vers l'ancien PDF)
     prog('Report des annotations…');
     const moved = [];
+    const idMap = new Map();
     for (const a of S.annots) {
       if (!map.has(a.page) || a.type === 'calibrate') continue;
       if (a.src && !o.others) continue;
@@ -195,10 +196,17 @@
       delete c.src; delete c.srcStamp;
       (c.replies || []).forEach((r) => { delete r.src; delete r.srcText; });
       c.id = LP.uid();
+      idMap.set(a.id, c.id);
       c.page = map.get(a.page);
       const [rx, ry] = ratios[a.page];
       if (Math.abs(rx - 1) > 1e-3 || Math.abs(ry - 1) > 1e-3) c.pts = c.pts.map((q) => [q[0] * rx, q[1] * ry]);
       moved.push(c);
+    }
+    // Câbles : reliés aux copies reportées (ceux dont une extrémité n'est pas reportée sont abandonnés)
+    for (let i = moved.length - 1; i >= 0; i--) {
+      const c = moved[i];
+      if (c.type !== 'cable') continue;
+      if (idMap.has(c.from) && idMap.has(c.to)) { c.from = idMap.get(c.from); c.to = idMap.get(c.to); } else moved.splice(i, 1);
     }
     const scales = {};
     for (const [p, q] of map) if (S.scales[p]) {

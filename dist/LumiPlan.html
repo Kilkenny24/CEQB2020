@@ -405,6 +405,7 @@ dialog h2 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
       <button data-tab="list" title="Annotations, décompte et quantités"><span data-icon="list"></span>Liste</button>
       <button data-tab="schedule" title="Tableau des luminaires"><span data-icon="schedule"></span>Tableau</button>
       <button data-tab="circuits" title="Circuits et zones de contrôle"><span data-icon="circuit"></span>Circuits</button>
+      <button data-tab="cables" title="Câblage : types, longueurs"><span data-icon="cable"></span>Câbles</button>
       <button data-tab="pages" title="Pages et révision"><span data-icon="pages"></span>Pages</button>
     </div>
     <section id="tab-symbols" class="tab active">
@@ -432,6 +433,7 @@ dialog h2 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
     </section>
     <section id="tab-schedule" class="tab"></section>
     <section id="tab-circuits" class="tab"></section>
+    <section id="tab-cables" class="tab"></section>
     <section id="tab-pages" class="tab">
       <div id="revisionBox"></div>
       <h3>Pages</h3>
@@ -544,6 +546,7 @@ dialog h2 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
       <tr><td>O</td><td>Note (commentaire)</td></tr>
       <tr><td>1 … 9</td><td>Symboles favoris (★ dans la bibliothèque)</td></tr>
       <tr><td>Ctrl+F</td><td>Rechercher dans le PDF</td></tr>
+      <tr><td>W</td><td>Câble (clic sur une composante, puis la suivante)</td></tr>
     </table>
     <table>
       <tr><td>S</td><td>Symbole (clic = placer, décompte)</td></tr>
@@ -687,6 +690,9 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     curve: '<path d="M3 18C6 4 12 4 13 12s6 8 8-6"/>',
     circle: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1"/>',
     arc: '<path d="M4 16a8 8 0 0116 0"/>',
+    cable: '<circle cx="4.5" cy="18" r="2"/><circle cx="19.5" cy="6" r="2"/><path d="M6 16.5C9 8 14 16 18 7.5"/>',
+    tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
+    height: '<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/><path d="M3 21h18" opacity=".6"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
   window.LP = window.LP || {};
@@ -1383,7 +1389,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -1528,17 +1534,25 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       const ov = env && env.ext && env.ext.symColor ? env.ext.symColor(a) : null;
       const sym = ov ? Object.assign({}, a.sym, { color: ov }) : a.sym;
       LP.drawSymbol(R, sym, { x: pts[0][0], y: pts[0][1], w: sz.w, h: sz.h, provisional: sz.provisional && R.kind === 'canvas', rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
-      if (env && env.ext && env.ext.showCircuit && a.circuit) {
-        // Circuit inscrit sous le luminaire
-        const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 8));
-        const t = String(a.circuit);
-        const w = R.measure(t, fs, false);
+      // Inscriptions sous le symbole : circuit, hauteur de montage
+      const under = [];
+      if (env && env.ext && env.ext.showCircuit && a.circuit) under.push(String(a.circuit));
+      if (env && env.ext && env.ext.showHeight) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
+      if (under.length) {
+        const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 7));
         const r = ((a.rot || 0) * Math.PI) / 180;
         const ey = Math.abs((sz.w / 2) * Math.sin(r)) + Math.abs((sz.h / 2) * Math.cos(r));
         R.save();
-        R.text(t, pts[0][0] - w / 2, pts[0][1] + ey + fs * 1.05, fs, ov || '#333333', false);
+        under.forEach((t, i) => {
+          const w = R.measure(t, fs, false);
+          R.text(t, pts[0][0] - w / 2, pts[0][1] + ey + fs * (1.05 + i * 1.15), fs, ov || '#333333', false);
+        });
         R.restore();
       }
+      return;
+    }
+    if (a.type === 'cable') {
+      drawCable(R, a, env);
       return;
     }
     if (a.type === 'schedule') {
@@ -1712,6 +1726,11 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
         const [bx, by, bw, bh] = bbox(a);
         return x >= bx - tol && x <= bx + bw + tol && y >= by - tol && y <= by + bh + tol;
       }
+      case 'cable': {
+        const g = cableGeom(a, LP.env);
+        for (let i = 1; i < g.pts.length; i++) if (distSeg(x, y, g.pts[i - 1], g.pts[i]) <= tol + 1) return true;
+        return false;
+      }
       case 'markup':
         for (let i = 0; i + 3 < p.length; i += 4) if (inPoly(x, y, [p[i], p[i + 1], p[i + 3], p[i + 2]])) return true;
         return false;
@@ -1737,6 +1756,68 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       }
     }
     return false;
+  }
+
+  /*
+   * Câble entre deux composantes : courbe de Bézier légère. Plusieurs câbles entre les
+   * mêmes composantes sont répartis de part et d'autre, de plus en plus écartés.
+   * Les extrémités suivent les symboles reliés (a.from / a.to).
+   */
+  function cableGeom(a, env) {
+    const ext = (env && env.ext) || {};
+    const A = ext.byId ? ext.byId(a.from) : null, B = ext.byId ? ext.byId(a.to) : null;
+    const p0 = A ? A.pts[0] : a.pts[0], p1 = B ? B.pts[0] : a.pts[1];
+    a.pts = [[p0[0], p0[1]], [p1[0], p1[1]]];
+    const lane = ext.cableLane ? ext.cableLane(a) : 0;
+    // Sens de référence commun à la paire (indépendant de l'ordre de tracé)
+    const flip = String(a.from) > String(a.to) ? -1 : 1;
+    const dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * flip, ny = (dx / L) * flip;
+    const o = (lane % 2 ? -1 : 1) * 0.12 * (1 + Math.floor(lane / 2)) * (a.bend != null ? a.bend : 1);
+    const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+    const q = [mx + nx * 2 * o * L, my + ny * 2 * o * L];
+    const c1 = [p0[0] + (2 / 3) * (q[0] - p0[0]), p0[1] + (2 / 3) * (q[1] - p0[1])];
+    const c2 = [p1[0] + (2 / 3) * (q[0] - p1[0]), p1[1] + (2 / 3) * (q[1] - p1[1])];
+    const pts = [];
+    let len = 0;
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24, u = 1 - t;
+      const p = [u * u * p0[0] + 2 * u * t * q[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * q[1] + t * t * p1[1]];
+      if (i) len += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+      pts.push(p);
+    }
+    // Étiquette décalée le long de la courbe selon le rang (évite les chevauchements entre câbles voisins)
+    const tl = 0.5 + (lane % 2 ? -1 : 1) * 0.14 * Math.ceil(lane / 2);
+    const lbl = pts[Math.max(2, Math.min(22, Math.round(tl * 24)))];
+    return { p0, p1, q, c1, c2, pts, len, mid: pts[12], lbl, orphan: !A || !B };
+  }
+  function drawCable(R, a, env) {
+    const g = cableGeom(a, env);
+    const ext = (env && env.ext) || {};
+    const st = ext.cableStyle ? ext.cableStyle(a.ctype) : { color: '#333333', width: 0.8, dash: [] };
+    const w = st.width * (a.style && a.style.width ? a.style.width : 1);
+    R.save();
+    if (a.style && a.style.opacity != null && a.style.opacity < 1) R.setAlpha(a.style.opacity);
+    R.setStroke(st.color);
+    R.setLineWidth(w);
+    R.setDash((st.dash || []).map((d) => d * w));
+    R.beginPath();
+    R.moveTo(g.p0[0], g.p0[1]);
+    R.curveTo(g.c1[0], g.c1[1], g.c2[0], g.c2[1], g.p1[0], g.p1[1]);
+    R.stroke();
+    R.setDash([]);
+    if (g.orphan) { // extrémité dont le symbole a disparu
+      R.setFill('#c2341b'); R.beginPath(); R.ellipsePath(g.p1[0], g.p1[1], 2, 2); R.fill();
+    }
+    if (ext.cableLabels) {
+      let t = ext.cableLabel ? ext.cableLabel(a) : String(a.ctype || '');
+      const fs = 4.5;
+      const tw = R.measure(t, fs, true), pad = 1;
+      R.setFill('#ffffff');
+      R.beginPath(); R.rectPath(g.lbl[0] - tw / 2 - pad, g.lbl[1] - fs * 0.85 - pad, tw + 2 * pad, fs * 1.15 + pad); R.fill();
+      R.text(t, g.lbl[0] - tw / 2, g.lbl[1], fs, st.color, true);
+    }
+    R.restore();
   }
 
   /*
@@ -1833,6 +1914,12 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   function bbox(a) {
     if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
     if (a.type === 'schedule') { const L = scheduleLayout(a, LP.env, null); return [a.pts[0][0], a.pts[0][1], L.w, L.h]; }
+    if (a.type === 'cable') {
+      const g = cableGeom(a, LP.env);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const q of g.pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
+      return [x0, y0, x1 - x0, y1 - y0];
+    }
     if (a.type === 'symbol') {
       // Emprise du rectangle tourné
       const sz = symSize(a);
@@ -1859,12 +1946,13 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       const sz = symSize(a);
       const ts = LP.tagSize(sz.w, sz.h);
       const tagLen = ((a.tag != null ? a.tag : a.sym.tag) || '').length;
-      const circ = a.circuit ? 12 : 0; // circuit inscrit sous le luminaire
+      const circ = 22; // circuit et hauteur inscrits sous le luminaire
       return [x - lw - 1 - circ, y - ts - lw - 1, w + tagLen * ts * 0.8 + ts + 2 * lw + 2 + 2 * circ, h + ts * 2 + 2 * lw + 2 + circ];
     }
     if (a.type === 'arrow' || a.type === 'callout') m += Math.max(lw * 4, 6);
     if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
     if (['length', 'calibrate', 'polylength', 'area'].includes(a.type)) m += (s.fontSize || 9) * 7;
+    if (a.type === 'cable') m += 30; // étiquette du câble
     return [x - m, y - m, w + 2 * m, h + 2 * m];
   }
 
@@ -1882,6 +1970,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       case 'text': case 'callout': return (a.text || '').slice(0, 60);
       case 'note': return (a.comment || '').slice(0, 60);
       case 'schedule': return a.scope === 'page' ? 'page courante' : 'tout le projet';
+      case 'cable': return LP.env && LP.env.ext && LP.env.ext.cableLabel ? LP.env.ext.cableLabel(a, true) : String(a.ctype || '');
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
     }
     return a.comment || '';
@@ -1910,7 +1999,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     return null;
   }
 
-  Object.assign(LP, { symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
+  Object.assign(LP, { cableGeom, symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
 })();
 
 </script>
@@ -2320,7 +2409,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     }
     const contents = e.contents || stripRC(e.rc);
     const id = a.id;
-    Object.assign(a, b, { id, page });
+    Object.assign(a, b, { id: b.id || id, page });
     a.author = e.author || b.author;
     a.modified = e.modified || b.modified;
     // Texte / commentaire possiblement modifiés dans un autre logiciel
@@ -2552,7 +2641,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   const SUBTYPE = {
     line: 'Line', arrow: 'Line', length: 'Line', calibrate: 'Line', rect: 'Square', highlight: 'Square', cloud: 'Square',
     ellipse: 'Circle', polyline: 'PolyLine', polylength: 'PolyLine', polygon: 'Polygon', area: 'Polygon', ink: 'Ink',
-    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp',
+    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine',
   };
   // Clés de géométrie / apparence réécrites lorsqu'une annotation importée est modifiée
   const REWRITE = ['AP', 'AS', 'RC', 'DS', 'DA', 'RD', 'L', 'LE', 'Vertices', 'InkList', 'QuadPoints', 'CL', 'IC', 'BE', 'BS', 'Border', 'CA'];
@@ -2589,7 +2678,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     set('Rect', ctx.obj(rect));
     set('M', L.PDFString.of(pdfDate(a.modified)));
     if (a.author) set('T', hexT(a.author));
-    const auto = ['length', 'polylength', 'area'].includes(a.type) && !a.comment ? LP.describeAnnotation(a, W.env) : null;
+    const auto = ['length', 'polylength', 'area', 'cable'].includes(a.type) && !a.comment ? LP.describeAnnotation(a, W.env) : null;
     const contents = a.type === 'text' || a.type === 'callout' ? a.text : (auto != null ? auto : a.comment);
     set('Contents', hexT(contents));
     const subj = a.type === 'symbol' ? `${a.sym.name}${a.tag ? ' - ' + a.tag : ''}` : (a.subject || LP.TYPE_LABELS[a.type]);
@@ -2662,6 +2751,10 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
         break;
       case 'schedule':
         set('Name', N('LumiPlanTableau'));
+        break;
+      case 'cable':
+        set('Vertices', ctx.obj(flat(W, LP.cableGeom(a, W.env).pts)));
+        set('BS', ctx.obj(bs));
         break;
     }
     // Données LumiPlan (symbole, étiquette, style exact) pour la réouverture
@@ -2782,6 +2875,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     { id: 'length', key: 'm', label: 'Longueur', icon: '<path d="M4 12h16M4 8v8M20 8v8"/>' },
     { id: 'polylength', key: 'n', label: 'Long. poly', icon: '<path d="M3 18l6-10 6 7 6-9"/><circle cx="3" cy="18" r="1"/><circle cx="21" cy="6" r="1"/>' },
     { id: 'area', key: 'b', label: 'Aire', icon: '<path d="M4 18l2-12 13 2-2 10z"/><path d="M8 14l3-3M11 15l4-4"/>' },
+    { id: 'cable', key: 'w', label: 'Câble', icon: '' },
   ];
   const TWO_POINT = new Set(['line', 'arrow', 'rect', 'ellipse', 'cloud', 'highlight', 'text', 'length', 'calibrate']);
   const MULTI_POINT = new Set(['polyline', 'polygon', 'polylength', 'area']);
@@ -3138,7 +3232,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       octx.setLineDash([4 / S.zoom, 3 / S.zoom]);
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
-      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup'].includes(a.type)) {
+      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) {
         for (const p of a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -3234,6 +3328,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
+    a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage (m)
     pushUndo();
     S.annots.push(a);
     changed();
@@ -3306,7 +3401,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   function handleHit(x, y) {
     if (S.sel.size !== 1) return null;
     const a = S.annots.find((q) => S.sel.has(q.id));
-    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup'].includes(a.type)) return null;
+    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) return null;
     const r = 6 / S.zoom;
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
@@ -3340,6 +3435,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       return;
     }
     const tool = S.tool;
+    if (hooks.tool[tool]) { hooks.tool[tool].down(p, e); return; }
     if (tool === 'select') {
       const h = handleHit(...p);
       if (h) { drag = { kind: 'handle', a: h.a, i: h.i, snap: snapshot(), moved: false }; return; }
@@ -3411,6 +3507,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     updatePosStatus(p);
     if (!drag) {
       updateCursor(p);
+      if (hooks.tool[S.tool] && hooks.tool[S.tool].move) hooks.tool[S.tool].move(p, e);
       if ((S.tool === 'symbol' && S.currentSym) || (drawing && MULTI_POINT.has(drawing.type))) {
         if (drawing && e.shiftKey) hover = constrain(drawing.pts[drawing.pts.length - 1], p, 'line');
         drawOverlay();
@@ -3430,7 +3527,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
           drag.moved = true;
           if (drag.alt) {
             // Alt + glisser = duplique
-            const copies = S.annots.filter((a) => S.sel.has(a.id)).map(cloneAnnot);
+            const copies = cloneGroup(S.annots.filter((a) => S.sel.has(a.id)));
             S.annots.push(...copies);
             S.sel = new Set(copies.map((c) => c.id));
           }
@@ -3846,8 +3943,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     if (pos.length > 2000 && !confirm(`${pos.length} copies vont être créées. Continuer ?`)) return;
     pushUndo();
     const created = [];
-    for (const p of pos) for (const b of placedCopies(p, false)) {
-      const c = cloneAnnot(b);
+    for (const p of pos) for (const c of cloneGroup(placedCopies(p, false))) {
       c.page = S.pageNum;
       created.push(c);
     }
@@ -3856,7 +3952,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       const ids = new Set(AR.src.map((a) => a.id));
       S.annots = S.annots.filter((a) => !ids.has(a.id));
     }
-    S.annots.push(...created);
+    S.annots = created.filter((a) => a.type === 'cable').concat(S.annots, created.filter((a) => a.type !== 'cable'));
     S.sel = new Set(created.map((a) => a.id));
     if (AR.kind === 'grid') AR.src.forEach((a) => S.sel.add(a.id));
     const n = created.length;
@@ -3962,7 +4058,10 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
 
   function deleteSel() {
     pushUndo();
-    S.annots = S.annots.filter((a) => !S.sel.has(a.id));
+    const gone = new Set(S.sel);
+    const linked = S.annots.filter((a) => a.type === 'cable' && !gone.has(a.id) && (gone.has(a.from) || gone.has(a.to))).length;
+    S.annots = S.annots.filter((a) => !gone.has(a.id) && !(a.type === 'cable' && (gone.has(a.from) || gone.has(a.to))));
+    if (linked) toast(`${linked} câble(s) relié(s) supprimé(s) aussi`);
     S.sel.clear();
     changed(); refreshProps();
   }
@@ -3976,6 +4075,18 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     return a;
   }
 
+  function cloneGroup(list) {
+    const map = new Map();
+    const out = [];
+    for (const a of list) { if (a.type === 'cable') continue; const c = cloneAnnot(a); map.set(a.id, c.id); out.push(c); }
+    for (const a of list) {
+      if (a.type !== 'cable' || !map.has(a.from) || !map.has(a.to)) continue;
+      const c = cloneAnnot(a); c.from = map.get(a.from); c.to = map.get(a.to);
+      out.unshift(c); // sous les symboles
+    }
+    return out;
+  }
+
   function copySel() {
     S.clipboard = S.annots.filter((a) => S.sel.has(a.id)).map((a) => JSON.parse(JSON.stringify(a)));
     if (S.clipboard.length) toast(`${S.clipboard.length} annotation(s) copiée(s)`);
@@ -3986,12 +4097,12 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     const samePage = S.clipboard.every((a) => a.page === S.pageNum);
     const off = samePage ? 12 : 0;
     S.sel.clear();
-    for (const c of S.clipboard) {
-      const a = cloneAnnot(c);
+    for (const a of cloneGroup(S.clipboard)) {
       a.page = S.pageNum;
       a.pts.forEach((q) => { q[0] += off; q[1] += off; });
       a.created = a.modified = new Date().toISOString();
-      S.annots.push(a); S.sel.add(a.id);
+      if (a.type === 'cable') S.annots.unshift(a); else S.annots.push(a);
+      S.sel.add(a.id);
     }
     S.clipboard.forEach((c) => { c.pts.forEach((q) => { q[0] += off; q[1] += off; }); c.page = S.pageNum; });
     changed(); refreshProps();
@@ -4055,6 +4166,14 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       { col: [
         { select: 'colorBy', icon: 'palette', label: 'Couleurs', options: [['', 'Normales'], ['circuit', 'Par circuit'], ['zone', 'Par zone de contrôle'], ['tag', 'Par type']] },
         { id: 'btnShowCircuit', icon: 'circuit', label: 'Étiq. circuits', title: 'Afficher le circuit sous chaque luminaire (visible aussi dans le PDF exporté)' },
+      ] },
+    ] },
+    { title: 'Câblage', items: [
+      { tool: 'cable', big: true },
+      { col: [
+        { select: 'cableType', icon: 'cable', label: 'Type de câble', options: [['120V', '120 V'], ['0-10V', '0-10 V'], ['CAT5e', 'CAT5e'], ['DMX', 'DMX'], ['12V', '12 V'], ['24V', '24 V'], ['48V', '48 V'], ['LAN', 'LAN']] },
+        { id: 'btnCableLabels', icon: 'tag', label: 'Étiq. câbles', title: 'Afficher le type (et la longueur) sur chaque câble' },
+        { id: 'btnShowHeight', icon: 'height', label: 'Hauteurs', title: 'Inscrire la hauteur de montage sous chaque symbole (visible aussi dans le PDF exporté)' },
       ] },
     ] },
     { title: 'Révision', items: [
@@ -4332,6 +4451,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   }
   function setTool(id) {
     if (AR) AR = null;
+    for (const t of Object.values(hooks.tool)) if (t.cancel) t.cancel();
     if (id !== 'select' && pendingAction) { pendingAction = null; markAction(null); }
     commitText();
     if (drawing && MULTI_POINT.has(drawing.type)) finishMulti();
@@ -4350,6 +4470,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       calibrate: 'Tracer une ligne sur une cote connue, puis saisir sa longueur réelle',
       callout: 'Glisser de la pointe vers l\'emplacement du texte',
       note: 'Cliquer pour placer une note (commentaire), puis écrire dans le panneau de droite',
+      cable: 'Cliquer une composante, puis la suivante (chaînage) ; Échap ou clic droit pour terminer. Type : ruban Câblage',
     };
     $('#statusTool').textContent = `${t ? t.label : ''} — ${hints[id] || 'Glisser pour dessiner (Maj = contraindre)'}`;
     updateCursor(hover);
@@ -4387,6 +4508,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       return;
     }
     $('#propTitle').textContent = title;
+    if (isDefaults && hooks.toolProps[S.tool]) { const r = hooks.toolProps[S.tool](); box.innerHTML = r.html; if (r.bind) r.bind(box); return; }
     if (!isDefaults) {
       for (const f of hooks.props) {
         const r = f(target);
@@ -4425,6 +4547,11 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
           <datalist id="dlCircuits">${vals('circuit').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
           <label>Zone contrôle <input type="text" data-k="zone" list="dlZones" placeholder="${target.length > 1 && !same('zone') ? '(plusieurs)' : 'ex. Z1, Classe 104'}" value="${esc(same('zone'))}"></label>
           <datalist id="dlZones">${vals('zone').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
+        const dh = (env.ext && env.ext.defaultHeight) || 3.048;
+        const hv = (x) => (x.mh != null ? x.mh : dh);
+        const sameH = target.every((x) => Math.abs(hv(x) - hv(target[0])) < 1e-6);
+        h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${target.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(target[0]), S.unit, false)) : ''}" title="Hauteur de montage (sert aussi au calcul des longueurs de câble)"></label>`;
+        h += hooks.propsExtra.map((f) => f(target)).join('');
       }
       const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
       h += `<label>Dimension <select data-k="mode">
@@ -4438,6 +4565,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
               ${!round && isDefaults ? '<br>Astuce : cliquer-glisser pour poser à la longueur voulue.' : ''}</p>
             <label>Rotation (°) <input type="number" data-k="rot" step="15" value="${rotVal}"></label>
             <label class="inline"><input type="checkbox" data-k="showTag" ${show ? 'checked' : ''}> Afficher l'étiquette</label>`;
+      if (isDefaults) h += `<label>Hauteur (défaut) <input type="text" data-k="defaultHeight" value="${esc(LP.fmtDim((env.ext && env.ext.defaultHeight) || 3.048, S.unit, false))}" title="Hauteur de montage donnée aux prochains symboles posés"></label>`;
       if (!isDefaults) h += `<label>Opacité <input type="number" data-k="style.opacity" min="0.1" max="1" step="0.1" value="${st.opacity ?? 1}"></label>`;
     } else {
       h += colorField('Couleur', 'style.stroke', st.stroke || '#d00000');
@@ -4550,6 +4678,13 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       if (S.tool === 'symbol') {
         if (k === 'rot') symDefaults.rot = v;
         else if (k === 'showTag') symDefaults.showTag = v;
+        else if (k === 'defaultHeight') {
+          const m = LP.parseDim(v, S.unit, false);
+          if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »`); refreshProps(); return; }
+          env.ext.defaultHeight = m; LP.store.set('defaultHeight', m);
+          toast(`Hauteur par défaut : ${LP.fmtDim(m, S.unit, false)}`);
+          refreshProps();
+        }
         else if (S.currentSym && (k === 'mode' || k === 'dimL' || k === 'dimW')) {
           const sym = LP.migrateSym(S.currentSym);
           if (!setSymDim(sym, k, v, env.scaleFor(S.pageNum), null)) return;
@@ -4568,6 +4703,14 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     if (!propSnap) propSnap = snapshot();
     clearTimeout(propSnapTimer);
     propSnapTimer = setTimeout(() => { pushUndo(propSnap); propSnap = null; }, 600);
+    if (k === 'mh') {
+      const m = LP.parseDim(v, S.unit, false);
+      if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »\nExemples : 10'  9'-6"  3000 mm`); refreshProps(); return; }
+      pushUndo();
+      for (const a of target) if (a.type === 'symbol') { a.mh = m; touch(a); }
+      changed(); refreshProps();
+      return;
+    }
     if (k === 'mode' || k === 'dimL' || k === 'dimW') {
       const snap = snapshot();
       let ok = true;
@@ -5491,7 +5634,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   }
 
   /* ======================= Interface interne pour les modules ======================= */
-  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [] };
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {} };
   LP.app = {
     S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
     goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
@@ -5503,6 +5646,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
+    topHit: (x, y) => topHit(x, y), cloneGroup, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,
     openMenu, closeMenu,
   };
@@ -6388,6 +6532,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     // 2. Annotations reportées (copies indépendantes, sans lien vers l'ancien PDF)
     prog('Report des annotations…');
     const moved = [];
+    const idMap = new Map();
     for (const a of S.annots) {
       if (!map.has(a.page) || a.type === 'calibrate') continue;
       if (a.src && !o.others) continue;
@@ -6395,10 +6540,17 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       delete c.src; delete c.srcStamp;
       (c.replies || []).forEach((r) => { delete r.src; delete r.srcText; });
       c.id = LP.uid();
+      idMap.set(a.id, c.id);
       c.page = map.get(a.page);
       const [rx, ry] = ratios[a.page];
       if (Math.abs(rx - 1) > 1e-3 || Math.abs(ry - 1) > 1e-3) c.pts = c.pts.map((q) => [q[0] * rx, q[1] * ry]);
       moved.push(c);
+    }
+    // Câbles : reliés aux copies reportées (ceux dont une extrémité n'est pas reportée sont abandonnés)
+    for (let i = moved.length - 1; i >= 0; i--) {
+      const c = moved[i];
+      if (c.type !== 'cable') continue;
+      if (idMap.has(c.from) && idMap.has(c.to)) { c.from = idMap.get(c.from); c.to = idMap.get(c.to); } else moved.splice(i, 1);
     }
     const scales = {};
     for (const [p, q] of map) if (S.scales[p]) {
@@ -6546,6 +6698,372 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   document.head.appendChild(css);
 
   LP.revision = { diffPages, state: REV, start, goDiff };
+})();
+
+</script>
+<script>/* js/cables.js */
+/*
+ * Câblage : liaisons entre composantes (symboles) par type de câble, longueurs approximatives,
+ * hauteurs de montage.
+ *  - Outil « Câble » (W) : clic sur une composante, puis sur la suivante (chaînage).
+ *  - Au plus 3 types de câbles différents par composante.
+ *  - Longueur ≈ (longueur de la courbe sur le plan + différence de hauteur des extrémités
+ *    + raccordement à chaque extrémité) × (1 + réserve).
+ */
+(function () {
+  'use strict';
+  const LP = window.LP;
+  const app = LP.app;
+  const { S, env, $, esc } = app;
+  env.ext = env.ext || {};
+
+  // Couleur + motif de trait distincts (lisibles aussi en noir et blanc), en multiples de l'épaisseur
+  const TYPES = [
+    { k: '120V', label: '120 V', color: '#1b1f24', width: 1.1, dash: [] },
+    { k: '0-10V', label: '0-10 V', color: '#7c3aed', width: 0.8, dash: [5, 2.5] },
+    { k: 'CAT5e', label: 'CAT5e', color: '#2563eb', width: 0.8, dash: [6, 2, 1, 2] },
+    { k: 'DMX', label: 'DMX', color: '#ea580c', width: 0.9, dash: [] },
+    { k: '12V', label: '12 V', color: '#16a34a', width: 0.8, dash: [1, 2] },
+    { k: '24V', label: '24 V', color: '#0d9488', width: 0.8, dash: [3, 2] },
+    { k: '48V', label: '48 V', color: '#a16207', width: 0.8, dash: [8, 3] },
+    { k: 'LAN', label: 'LAN', color: '#0891b2', width: 0.8, dash: [6, 2, 1, 2, 1, 2] },
+  ];
+  const TYPE = Object.fromEntries(TYPES.map((t) => [t.k, t]));
+  const MAX_TYPES = 3;
+  const FT = 0.3048;
+
+  // Réglages enregistrés avec le projet
+  const CFG = { reserve: 10, allowance: 1 * FT };
+  const VIEW = { labels: true, lengths: false, height: false, type: 'DMX' };
+
+  /* ---------------- Accès rapide aux annotations ---------------- */
+  let cacheRef = null, cacheLen = -1, cacheMap = new Map();
+  function byId(id) {
+    if (cacheRef !== S.annots || cacheLen !== S.annots.length) {
+      cacheMap = new Map(S.annots.map((a) => [a.id, a]));
+      cacheRef = S.annots; cacheLen = S.annots.length;
+    }
+    const a = cacheMap.get(id);
+    return a && a.type === 'symbol' ? a : null;
+  }
+  const cables = () => S.annots.filter((a) => a.type === 'cable');
+  const pairKey = (a) => (String(a.from) < String(a.to) ? a.from + '|' + a.to : a.to + '|' + a.from);
+  // Rang du câble parmi ceux qui relient les mêmes composantes (0, 1, 2…)
+  // Rang stable : ordre de création (un nouveau câble ne déplace pas les existants)
+  function cableLane(a) {
+    const k = pairKey(a);
+    const key = (c) => `${c.created || ''}|${c.id}`;
+    const me = key(a);
+    let i = 0;
+    for (const c of S.annots) if (c !== a && c.type === 'cable' && c.page === a.page && pairKey(c) === k && key(c) < me) i++;
+    return i;
+  }
+  function typesOf(sym, except) {
+    const set = new Set();
+    for (const c of cables()) if (c !== except && (c.from === sym.id || c.to === sym.id)) set.add(c.ctype);
+    return set;
+  }
+
+  /* ---------------- Longueurs ---------------- */
+  const mh = (a) => (a && a.mh != null ? a.mh : env.ext.defaultHeight || 3.048);
+  function lengthOf(a) {
+    const sc = env.scaleFor(a.page);
+    if (!sc) return null;
+    const g = LP.cableGeom(a, env);
+    const A = byId(a.from), B = byId(a.to);
+    const plan = g.len * sc.mpp;
+    const dh = Math.abs(mh(A) - mh(B));
+    const total = (plan + dh + 2 * CFG.allowance) * (1 + CFG.reserve / 100);
+    return { plan, dh, total };
+  }
+  function fmtLen(m) {
+    if (m == null) return '—';
+    if (S.unit === 'ft') {
+      const ft = m / FT;
+      return ft >= 10 ? `${Math.round(ft)}'` : LP.fmtDim(m, 'ft', false);
+    }
+    return `${(Math.round(m * 10) / 10).toString().replace('.', ',')} m`;
+  }
+
+  /* ---------------- Fonctions de dessin fournies au moteur ---------------- */
+  Object.assign(env.ext, {
+    byId,
+    cableLane,
+    cableStyle: (k) => TYPE[k] || TYPES[0],
+    cableLabel(a, long) {
+      const t = TYPE[a.ctype] ? TYPE[a.ctype].label : String(a.ctype || '');
+      if (!(long || VIEW.lengths)) return t;
+      const L = lengthOf(a);
+      return L ? `${t} · ${fmtLen(L.total)}` : t;
+    },
+    cableLabels: VIEW.labels,
+    showHeight: VIEW.height,
+    defaultHeight: 10 * FT,
+  });
+
+  /* ---------------- Outil de tracé ---------------- */
+  let start = null, hoverP = null;
+  function symbolAt(p) {
+    const tol = 6 / S.zoom;
+    for (let i = S.annots.length - 1; i >= 0; i--) {
+      const a = S.annots[i];
+      if (a.type === 'symbol' && a.page === S.pageNum && LP.hitAnnotation(a, p[0], p[1], tol)) return a;
+    }
+    return null;
+  }
+  const symName = (a) => (a ? `${a.sym.name}${a.tag ? ' [' + a.tag + ']' : ''}` : '—');
+  app.hooks.tool.cable = {
+    down(p, e) {
+      if (e.button !== 0) return;
+      const sym = symbolAt(p);
+      if (!sym) { app.toast('Cliquez sur une composante (symbole) pour la relier'); return; }
+      if (!start) { start = sym; app.toast(`Départ : ${symName(sym)} — cliquez la composante suivante`, 5000); app.drawOverlay(); app.refreshProps(); return; }
+      if (sym === start) return;
+      const t = VIEW.type;
+      for (const s of [start, sym]) {
+        const ts = typesOf(s);
+        if (!ts.has(t) && ts.size >= MAX_TYPES) {
+          alert(`« ${symName(s)} » a déjà ${MAX_TYPES} types de câbles (${[...ts].join(', ')}).\nMaximum : ${MAX_TYPES} types par composante.`);
+          return;
+        }
+      }
+      const c = app.newAnnot('cable', [start.pts[0].slice(), sym.pts[0].slice()]);
+      c.ctype = t; c.from = start.id; c.to = sym.id;
+      c.style = { width: 1, opacity: 1 };
+      app.pushUndo();
+      S.annots.unshift(c); // sous les symboles
+      app.changed();
+      start = sym; // chaînage
+      const L = lengthOf(c);
+      app.toast(`${TYPE[t].label} : ${symName(c.from && byId(c.from))} → ${symName(sym)}${L ? ' ≈ ' + fmtLen(L.total) : ''} — cliquez la suivante ou Échap`, 6000);
+    },
+    move(p) { hoverP = p; if (start) app.drawOverlay(); },
+    cancel() { start = null; hoverP = null; },
+  };
+  // Panneau de droite quand l'outil Câble est actif
+  app.hooks.toolProps.cable = () => ({
+    html: `<label>Type <select id="cbTypeP">${TYPES.map((t) => `<option value="${t.k}" ${t.k === VIEW.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+      <p class="hint">${start ? `Départ : <b>${esc(symName(start))}</b>. Cliquez la composante suivante ; Échap pour terminer le chaînage.` : 'Cliquez une composante (symbole), puis la suivante. Le tracé continue en chaîne d\'une composante à l\'autre.'}</p>
+      <p class="hint">Au plus ${MAX_TYPES} types de câbles par composante. Plusieurs câbles entre deux mêmes composantes sont écartés automatiquement ; la courbure se règle dans les propriétés du câble.</p>
+      <div class="cb-legend">${TYPES.map((t) => `<div><svg width="44" height="10"><line x1="2" y1="5" x2="42" y2="5" stroke="${t.color}" stroke-width="${t.width * 1.8}" stroke-dasharray="${t.dash.map((d) => d * t.width * 1.8).join(' ')}"/></svg>${t.label}</div>`).join('')}</div>`,
+    bind(box) { box.querySelector('#cbTypeP').onchange = (e) => { VIEW.type = e.target.value; const s = $('#cableType'); if (s) s.value = VIEW.type; setView('type', VIEW.type); }; },
+  });
+  app.hooks.key.push((e, inField) => {
+    if (!inField && e.key === 'Escape' && start) { start = null; app.drawOverlay(); app.toast('Chaînage terminé'); return true; }
+    return false;
+  });
+  app.hooks.overlay.push((ctx) => {
+    if (S.tool !== 'cable' || !start || start.page !== S.pageNum) return;
+    const st = TYPE[VIEW.type];
+    ctx.save();
+    ctx.strokeStyle = st.color; ctx.lineWidth = 2 / S.zoom;
+    const [x, y] = start.pts[0];
+    ctx.beginPath(); ctx.arc(x, y, 10 / S.zoom, 0, Math.PI * 2); ctx.stroke();
+    if (hoverP) {
+      const dx = hoverP[0] - x, dy = hoverP[1] - y, L = Math.hypot(dx, dy) || 1;
+      const qx = (x + hoverP[0]) / 2 - (dy / L) * L * 0.24, qy = (y + hoverP[1]) / 2 + (dx / L) * L * 0.24;
+      ctx.setLineDash([6 / S.zoom, 4 / S.zoom]);
+      ctx.lineWidth = 1.4 / S.zoom;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(qx, qy, hoverP[0], hoverP[1]); ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  /* ---------------- Propriétés ---------------- */
+  // Symboles : câbles reliés (information)
+  app.hooks.propsExtra.push((target) => {
+    if (target.length !== 1) return '';
+    const s = target[0];
+    const counts = new Map();
+    for (const c of cables()) if (c.from === s.id || c.to === s.id) counts.set(c.ctype, (counts.get(c.ctype) || 0) + 1);
+    if (!counts.size) return '';
+    return `<p class="hint">Câbles : ${[...counts].map(([k, n]) => `<b style="color:${TYPE[k] ? TYPE[k].color : 'inherit'}">${esc(TYPE[k] ? TYPE[k].label : k)}</b> ×${n}`).join(', ')} <span title="Maximum ${MAX_TYPES} types par composante">(${counts.size}/${MAX_TYPES} types)</span></p>`;
+  });
+  // Câbles sélectionnés : panneau dédié
+  app.hooks.props.push((target) => {
+    if (!target.length || target.some((a) => a.type !== 'cable')) return null;
+    const a = target[0], one = target.length === 1;
+    const L = one ? lengthOf(a) : null;
+    let tot = 0, unknown = 0;
+    for (const c of target) { const l = lengthOf(c); if (l) tot += l.total; else unknown++; }
+    const html = `
+      ${one ? `<p class="hint"><b>${esc(symName(byId(a.from)))}</b><br>→ <b>${esc(symName(byId(a.to)))}</b></p>` : `<p class="hint">${target.length} câbles sélectionnés</p>`}
+      <label>Type <select data-cb="ctype">${TYPES.map((t) => `<option value="${t.k}" ${target.every((c) => c.ctype === t.k) ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+      ${one ? `<label>Courbure <input type="range" data-cb="bend" min="-3" max="3" step="0.25" value="${a.bend != null ? a.bend : 1}"></label>` : ''}
+      <label>Épaisseur × <input type="number" data-cb="w" min="0.25" max="5" step="0.25" value="${(a.style && a.style.width) || 1}"></label>
+      <h3>Longueur approximative</h3>
+      ${one ? (L ? `<table class="cb-len"><tr><td>Sur le plan</td><td class="num">${fmtLen(L.plan)}</td></tr>
+          <tr><td>Différence de hauteur</td><td class="num">${fmtLen(L.dh)}</td></tr>
+          <tr><td>Raccordements (2 ×)</td><td class="num">${fmtLen(2 * CFG.allowance)}</td></tr>
+          <tr><td>Réserve</td><td class="num">${CFG.reserve} %</td></tr>
+          <tr class="tot"><td>Total</td><td class="num">${fmtLen(L.total)}</td></tr></table>`
+        : '<p class="hint">Page non calibrée : longueur inconnue.</p>')
+      : `<p class="hint"><b>${fmtLen(tot)}</b>${unknown ? ` (+ ${unknown} sur page non calibrée)` : ''}</p>`}
+      ${one ? `<label class="full"><span>Commentaire</span><textarea data-cb="comment">${esc(a.comment || '')}</textarea></label>` : ''}
+      <div class="row"><button data-cb-act="del" class="danger">${LP.icon('trash')}Supprimer</button></div>`;
+    return {
+      html,
+      bind(box) {
+        box.querySelectorAll('[data-cb]').forEach((el) => el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
+          const k = el.dataset.cb;
+          if (k === 'ctype') {
+            for (const c of target) for (const s of [byId(c.from), byId(c.to)]) {
+              if (!s) continue;
+              const ts = typesOf(s, c);
+              if (!ts.has(el.value) && ts.size >= MAX_TYPES) { alert(`« ${symName(s)} » a déjà ${MAX_TYPES} types de câbles : changement refusé.`); app.refreshProps(); return; }
+            }
+          }
+          if (el.type !== 'range') app.pushUndo();
+          for (const c of target) {
+            if (k === 'ctype') c.ctype = el.value;
+            else if (k === 'bend') c.bend = parseFloat(el.value);
+            else if (k === 'w') c.style = Object.assign({}, c.style, { width: Math.max(0.25, parseFloat(el.value) || 1) });
+            else if (k === 'comment') c.comment = el.value;
+          }
+          if (el.type === 'range') app.drawOverlay(); else { app.changed(); app.refreshProps(); }
+        }));
+        const r = box.querySelector('[data-cb=bend]');
+        if (r) r.addEventListener('change', () => { app.pushUndo(); app.changed(); app.refreshProps(); });
+        box.querySelector('[data-cb-act=del]').onclick = () => { app.pushUndo(); const ids = new Set(target.map((c) => c.id)); S.annots = S.annots.filter((x) => !ids.has(x.id)); S.sel.clear(); app.changed(); app.refreshProps(); };
+      },
+    };
+  });
+
+  /* ---------------- Onglet Câbles ---------------- */
+  function stats() {
+    const m = new Map(TYPES.map((t) => [t.k, { t, runs: 0, total: 0, unknown: 0 }]));
+    for (const c of cables()) {
+      const e = m.get(c.ctype) || m.get('120V');
+      e.runs++;
+      const L = lengthOf(c);
+      if (L) e.total += L.total; else e.unknown++;
+    }
+    return [...m.values()].filter((e) => e.runs);
+  }
+  function render() {
+    const box = $('#tab-cables');
+    if (!box) return;
+    if (box.contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName)) return;
+    const st = stats();
+    const all = cables();
+    const orphans = all.filter((c) => !byId(c.from) || !byId(c.to)).length;
+    let h = `<div class="row"><button id="cbTool" class="primary">${LP.icon('cable')}Tracer un câble (W)</button></div>
+      <h3>Longueurs par type</h3>`;
+    if (!st.length) h += '<p class="hint">Aucun câble. Choisissez le type dans le ruban <b>Câblage</b>, puis cliquez une composante et la suivante.</p>';
+    else {
+      h += `<table class="cb-table"><thead><tr><th>Type</th><th class="num">Liens</th><th class="num">Longueur</th></tr></thead><tbody>`;
+      let grand = 0;
+      for (const e of st) {
+        grand += e.total;
+        h += `<tr data-type="${e.t.k}"><td><span class="cb-sw" style="border-color:${e.t.color};border-style:${e.t.dash.length ? 'dashed' : 'solid'}"></span>${e.t.label}</td><td class="num">${e.runs}</td><td class="num"><b>${fmtLen(e.total)}</b>${e.unknown ? `<small> +${e.unknown} ?</small>` : ''}</td></tr>`;
+      }
+      h += `</tbody></table><p class="hint">Longueurs approximatives, réserve et raccordements compris.${st.some((e) => e.unknown) ? ' « ? » : câbles sur une page non calibrée.' : ''}</p>`;
+    }
+    if (orphans) h += `<p class="hint" style="color:var(--danger)">${orphans} câble(s) dont une extrémité n'existe plus (point rouge sur le plan).</p>`;
+    h += `<h3>Calcul</h3>
+      <label class="cb-set">Réserve (%) <input type="number" id="cbRes" min="0" max="100" step="1" value="${CFG.reserve}"></label>
+      <label class="cb-set">Raccordement / extrémité <input type="text" id="cbAllow" value="${esc(LP.fmtDim(CFG.allowance, S.unit, false))}"></label>
+      <label class="cb-set">Hauteur par défaut <input type="text" id="cbDefH" value="${esc(LP.fmtDim(env.ext.defaultHeight, S.unit, false))}" title="Hauteur de montage donnée aux symboles posés"></label>
+      <p class="hint">Longueur ≈ (courbe sur le plan + différence de hauteur de montage entre les deux extrémités + 2 × raccordement) × (1 + réserve). Estimation pour la soumission, pas un relevé de chantier.</p>
+      <h3>Affichage</h3>
+      <label class="inline"><input type="checkbox" id="cbLbl" ${VIEW.labels ? 'checked' : ''}> Type inscrit sur chaque câble</label>
+      <label class="inline"><input type="checkbox" id="cbLen" ${VIEW.lengths ? 'checked' : ''}> Ajouter la longueur à l'étiquette</label>
+      <label class="inline"><input type="checkbox" id="cbH" ${VIEW.height ? 'checked' : ''}> Hauteur de montage sous les symboles</label>
+      <h3>Légende</h3><div class="cb-legend">${TYPES.map((t) => `<div><svg width="44" height="10"><line x1="2" y1="5" x2="42" y2="5" stroke="${t.color}" stroke-width="${t.width * 1.8}" stroke-dasharray="${t.dash.map((d) => d * t.width * 1.8).join(' ')}"/></svg>${t.label}</div>`).join('')}</div>`;
+    if (all.length) {
+      h += '<h3>Liens (feuille courante)</h3>';
+      const here = all.filter((c) => c.page === S.pageNum);
+      h += here.length ? here.map((c) => { const L = lengthOf(c); return `<div class="item cb-run" data-id="${c.id}"><span style="color:${(TYPE[c.ctype] || TYPES[0]).color};font-weight:600">${esc((TYPE[c.ctype] || {}).label || c.ctype)}</span> <span>${esc(symName(byId(c.from)))} → ${esc(symName(byId(c.to)))}</span><span class="meta">${L ? fmtLen(L.total) : '—'}</span></div>`; }).join('') : '<p class="hint">Aucun lien sur cette feuille.</p>';
+    }
+    box.innerHTML = h;
+    box.querySelector('#cbTool').onclick = () => app.setTool('cable');
+    const num = (el, f) => el.addEventListener('change', f);
+    num(box.querySelector('#cbRes'), (e) => { CFG.reserve = Math.max(0, parseFloat(e.target.value) || 0); app.changed(); });
+    num(box.querySelector('#cbAllow'), (e) => {
+      const m = LP.parseDim(e.target.value, S.unit, false);
+      if (!(m >= 0)) { alert('Longueur non reconnue'); return render(); }
+      CFG.allowance = m; app.changed();
+    });
+    num(box.querySelector('#cbDefH'), (e) => {
+      const m = LP.parseDim(e.target.value, S.unit, false);
+      if (!(m >= 0)) { alert('Hauteur non reconnue'); return render(); }
+      env.ext.defaultHeight = m; LP.store.set('defaultHeight', m); app.toast(`Hauteur par défaut : ${LP.fmtDim(m, S.unit, false)}`);
+    });
+    box.querySelector('#cbLbl').onchange = (e) => setView('labels', e.target.checked);
+    box.querySelector('#cbLen').onchange = (e) => setView('lengths', e.target.checked);
+    box.querySelector('#cbH').onchange = (e) => setView('height', e.target.checked);
+    box.querySelectorAll('.cb-run').forEach((d) => d.onclick = () => { app.setTool('select'); S.sel = new Set([d.dataset.id]); app.refreshProps(); app.drawOverlay(); });
+    box.querySelectorAll('tr[data-type]').forEach((tr) => tr.onclick = () => {
+      const ids = cables().filter((c) => c.ctype === tr.dataset.type && c.page === S.pageNum).map((c) => c.id);
+      app.setTool('select'); S.sel = new Set(ids); app.refreshProps(); app.drawOverlay();
+      app.toast(`${ids.length} câble(s) ${TYPE[tr.dataset.type].label} sélectionné(s) sur cette feuille`);
+    });
+  }
+  function setView(k, v) {
+    VIEW[k] = v;
+    env.ext.cableLabels = VIEW.labels;
+    env.ext.showHeight = VIEW.height;
+    LP.store.set('cableView', { labels: VIEW.labels, lengths: VIEW.lengths, height: VIEW.height, type: VIEW.type });
+    const bl = $('#btnCableLabels'); if (bl) bl.classList.toggle('active', VIEW.labels);
+    const bh = $('#btnShowHeight'); if (bh) bh.classList.toggle('active', VIEW.height);
+    app.drawOverlay(); render();
+  }
+
+  /* ---------------- CSV, projet ---------------- */
+  app.hooks.csv.push((rows) => {
+    rows.push([]);
+    rows.push(['CÂBLAGE (longueurs approximatives)']);
+    rows.push([`Réserve ${CFG.reserve} %`, `Raccordement par extrémité ${LP.fmtDim(CFG.allowance, S.unit, false)}`]);
+    rows.push(['Type', 'Liens', 'Longueur totale (m)', 'Longueur totale (pi)']);
+    for (const e of stats()) rows.push([e.t.label, e.runs, String(Math.round(e.total * 10) / 10).replace('.', ','), String(Math.round(e.total / FT)).replace('.', ','), e.unknown ? `${e.unknown} sur page non calibrée` : '']);
+    rows.push([]);
+    rows.push(['Page', 'Type', 'De', 'Hauteur de', 'À', 'Hauteur à', 'Sur le plan (m)', 'Total (m)', 'Total (pi)']);
+    for (const c of cables().sort((x, y) => x.page - y.page)) {
+      const A = byId(c.from), B = byId(c.to), L = lengthOf(c);
+      rows.push([c.page, (TYPE[c.ctype] || {}).label || c.ctype, symName(A), LP.fmtDim(mh(A), S.unit, false), symName(B), LP.fmtDim(mh(B), S.unit, false),
+        L ? String(Math.round(L.plan * 10) / 10).replace('.', ',') : '', L ? String(Math.round(L.total * 10) / 10).replace('.', ',') : '', L ? Math.round(L.total / FT) : '']);
+    }
+  });
+  app.hooks.save.push((ext) => { ext.cables = { reserve: CFG.reserve, allowance: CFG.allowance }; });
+  app.hooks.load.push((ext) => {
+    if (ext.cables) { CFG.reserve = ext.cables.reserve != null ? ext.cables.reserve : 10; CFG.allowance = ext.cables.allowance != null ? ext.cables.allowance : FT; }
+    render();
+  });
+  app.hooks.panels.push(render);
+  app.hooks.open.push(render);
+  app.hooks.page.push(() => { start = null; render(); });
+
+  // Ruban
+  const sel = $('#cableType');
+  if (sel) sel.onchange = (e) => { VIEW.type = e.target.value; setView('type', e.target.value); if (S.tool !== 'cable') app.setTool('cable'); };
+  const bl = $('#btnCableLabels'); if (bl) bl.onclick = () => setView('labels', !VIEW.labels);
+  const bh = $('#btnShowHeight'); if (bh) bh.onclick = () => setView('height', !VIEW.height);
+  (async () => {
+    const v = await LP.store.get('cableView');
+    if (v) Object.assign(VIEW, v);
+    if (sel) sel.value = VIEW.type;
+    const dh = await LP.store.get('defaultHeight');
+    if (dh != null) env.ext.defaultHeight = dh;
+    setView('labels', VIEW.labels);
+  })();
+
+  const css = document.createElement('style');
+  css.textContent = `
+    .cb-table tr[data-type] { cursor: pointer; }
+    .cb-table tr:hover td { background: var(--panel-2); }
+    .cb-sw { display: inline-block; width: 18px; height: 0; border-top-width: 3px; vertical-align: middle; margin-right: 6px; }
+    .cb-set { display: grid; grid-template-columns: 1fr 96px; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 12px; }
+    .cb-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; font-size: 12px; }
+    .cb-legend div { display: flex; align-items: center; gap: 6px; }
+    .cb-legend svg { background: #fff; border-radius: 3px; }
+    .cb-run { display: grid !important; grid-template-columns: auto 1fr auto; gap: 6px; padding: 5px 6px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+    .cb-run:hover { background: var(--panel-2); }
+    .cb-len td { padding: 3px 4px; }
+    .cb-len tr.tot td { font-weight: 700; border-top: 2px solid var(--border-strong); }
+    .tabs button { font-size: 11px; }
+  `;
+  document.head.appendChild(css);
+  LP.cables = { TYPES, lengthOf, CFG, VIEW };
 })();
 
 </script>

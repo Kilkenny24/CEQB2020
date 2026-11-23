@@ -69,6 +69,7 @@
     { id: 'length', key: 'm', label: 'Longueur', icon: '<path d="M4 12h16M4 8v8M20 8v8"/>' },
     { id: 'polylength', key: 'n', label: 'Long. poly', icon: '<path d="M3 18l6-10 6 7 6-9"/><circle cx="3" cy="18" r="1"/><circle cx="21" cy="6" r="1"/>' },
     { id: 'area', key: 'b', label: 'Aire', icon: '<path d="M4 18l2-12 13 2-2 10z"/><path d="M8 14l3-3M11 15l4-4"/>' },
+    { id: 'cable', key: 'w', label: 'Câble', icon: '' },
   ];
   const TWO_POINT = new Set(['line', 'arrow', 'rect', 'ellipse', 'cloud', 'highlight', 'text', 'length', 'calibrate']);
   const MULTI_POINT = new Set(['polyline', 'polygon', 'polylength', 'area']);
@@ -425,7 +426,7 @@
       octx.setLineDash([4 / S.zoom, 3 / S.zoom]);
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
-      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup'].includes(a.type)) {
+      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) {
         for (const p of a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -521,6 +522,7 @@
     a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
+    a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage (m)
     pushUndo();
     S.annots.push(a);
     changed();
@@ -593,7 +595,7 @@
   function handleHit(x, y) {
     if (S.sel.size !== 1) return null;
     const a = S.annots.find((q) => S.sel.has(q.id));
-    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup'].includes(a.type)) return null;
+    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) return null;
     const r = 6 / S.zoom;
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
@@ -627,6 +629,7 @@
       return;
     }
     const tool = S.tool;
+    if (hooks.tool[tool]) { hooks.tool[tool].down(p, e); return; }
     if (tool === 'select') {
       const h = handleHit(...p);
       if (h) { drag = { kind: 'handle', a: h.a, i: h.i, snap: snapshot(), moved: false }; return; }
@@ -698,6 +701,7 @@
     updatePosStatus(p);
     if (!drag) {
       updateCursor(p);
+      if (hooks.tool[S.tool] && hooks.tool[S.tool].move) hooks.tool[S.tool].move(p, e);
       if ((S.tool === 'symbol' && S.currentSym) || (drawing && MULTI_POINT.has(drawing.type))) {
         if (drawing && e.shiftKey) hover = constrain(drawing.pts[drawing.pts.length - 1], p, 'line');
         drawOverlay();
@@ -717,7 +721,7 @@
           drag.moved = true;
           if (drag.alt) {
             // Alt + glisser = duplique
-            const copies = S.annots.filter((a) => S.sel.has(a.id)).map(cloneAnnot);
+            const copies = cloneGroup(S.annots.filter((a) => S.sel.has(a.id)));
             S.annots.push(...copies);
             S.sel = new Set(copies.map((c) => c.id));
           }
@@ -1133,8 +1137,7 @@
     if (pos.length > 2000 && !confirm(`${pos.length} copies vont être créées. Continuer ?`)) return;
     pushUndo();
     const created = [];
-    for (const p of pos) for (const b of placedCopies(p, false)) {
-      const c = cloneAnnot(b);
+    for (const p of pos) for (const c of cloneGroup(placedCopies(p, false))) {
       c.page = S.pageNum;
       created.push(c);
     }
@@ -1143,7 +1146,7 @@
       const ids = new Set(AR.src.map((a) => a.id));
       S.annots = S.annots.filter((a) => !ids.has(a.id));
     }
-    S.annots.push(...created);
+    S.annots = created.filter((a) => a.type === 'cable').concat(S.annots, created.filter((a) => a.type !== 'cable'));
     S.sel = new Set(created.map((a) => a.id));
     if (AR.kind === 'grid') AR.src.forEach((a) => S.sel.add(a.id));
     const n = created.length;
@@ -1249,7 +1252,10 @@
 
   function deleteSel() {
     pushUndo();
-    S.annots = S.annots.filter((a) => !S.sel.has(a.id));
+    const gone = new Set(S.sel);
+    const linked = S.annots.filter((a) => a.type === 'cable' && !gone.has(a.id) && (gone.has(a.from) || gone.has(a.to))).length;
+    S.annots = S.annots.filter((a) => !gone.has(a.id) && !(a.type === 'cable' && (gone.has(a.from) || gone.has(a.to))));
+    if (linked) toast(`${linked} câble(s) relié(s) supprimé(s) aussi`);
     S.sel.clear();
     changed(); refreshProps();
   }
@@ -1263,6 +1269,18 @@
     return a;
   }
 
+  function cloneGroup(list) {
+    const map = new Map();
+    const out = [];
+    for (const a of list) { if (a.type === 'cable') continue; const c = cloneAnnot(a); map.set(a.id, c.id); out.push(c); }
+    for (const a of list) {
+      if (a.type !== 'cable' || !map.has(a.from) || !map.has(a.to)) continue;
+      const c = cloneAnnot(a); c.from = map.get(a.from); c.to = map.get(a.to);
+      out.unshift(c); // sous les symboles
+    }
+    return out;
+  }
+
   function copySel() {
     S.clipboard = S.annots.filter((a) => S.sel.has(a.id)).map((a) => JSON.parse(JSON.stringify(a)));
     if (S.clipboard.length) toast(`${S.clipboard.length} annotation(s) copiée(s)`);
@@ -1273,12 +1291,12 @@
     const samePage = S.clipboard.every((a) => a.page === S.pageNum);
     const off = samePage ? 12 : 0;
     S.sel.clear();
-    for (const c of S.clipboard) {
-      const a = cloneAnnot(c);
+    for (const a of cloneGroup(S.clipboard)) {
       a.page = S.pageNum;
       a.pts.forEach((q) => { q[0] += off; q[1] += off; });
       a.created = a.modified = new Date().toISOString();
-      S.annots.push(a); S.sel.add(a.id);
+      if (a.type === 'cable') S.annots.unshift(a); else S.annots.push(a);
+      S.sel.add(a.id);
     }
     S.clipboard.forEach((c) => { c.pts.forEach((q) => { q[0] += off; q[1] += off; }); c.page = S.pageNum; });
     changed(); refreshProps();
@@ -1342,6 +1360,14 @@
       { col: [
         { select: 'colorBy', icon: 'palette', label: 'Couleurs', options: [['', 'Normales'], ['circuit', 'Par circuit'], ['zone', 'Par zone de contrôle'], ['tag', 'Par type']] },
         { id: 'btnShowCircuit', icon: 'circuit', label: 'Étiq. circuits', title: 'Afficher le circuit sous chaque luminaire (visible aussi dans le PDF exporté)' },
+      ] },
+    ] },
+    { title: 'Câblage', items: [
+      { tool: 'cable', big: true },
+      { col: [
+        { select: 'cableType', icon: 'cable', label: 'Type de câble', options: [['120V', '120 V'], ['0-10V', '0-10 V'], ['CAT5e', 'CAT5e'], ['DMX', 'DMX'], ['12V', '12 V'], ['24V', '24 V'], ['48V', '48 V'], ['LAN', 'LAN']] },
+        { id: 'btnCableLabels', icon: 'tag', label: 'Étiq. câbles', title: 'Afficher le type (et la longueur) sur chaque câble' },
+        { id: 'btnShowHeight', icon: 'height', label: 'Hauteurs', title: 'Inscrire la hauteur de montage sous chaque symbole (visible aussi dans le PDF exporté)' },
       ] },
     ] },
     { title: 'Révision', items: [
@@ -1619,6 +1645,7 @@
   }
   function setTool(id) {
     if (AR) AR = null;
+    for (const t of Object.values(hooks.tool)) if (t.cancel) t.cancel();
     if (id !== 'select' && pendingAction) { pendingAction = null; markAction(null); }
     commitText();
     if (drawing && MULTI_POINT.has(drawing.type)) finishMulti();
@@ -1637,6 +1664,7 @@
       calibrate: 'Tracer une ligne sur une cote connue, puis saisir sa longueur réelle',
       callout: 'Glisser de la pointe vers l\'emplacement du texte',
       note: 'Cliquer pour placer une note (commentaire), puis écrire dans le panneau de droite',
+      cable: 'Cliquer une composante, puis la suivante (chaînage) ; Échap ou clic droit pour terminer. Type : ruban Câblage',
     };
     $('#statusTool').textContent = `${t ? t.label : ''} — ${hints[id] || 'Glisser pour dessiner (Maj = contraindre)'}`;
     updateCursor(hover);
@@ -1674,6 +1702,7 @@
       return;
     }
     $('#propTitle').textContent = title;
+    if (isDefaults && hooks.toolProps[S.tool]) { const r = hooks.toolProps[S.tool](); box.innerHTML = r.html; if (r.bind) r.bind(box); return; }
     if (!isDefaults) {
       for (const f of hooks.props) {
         const r = f(target);
@@ -1712,6 +1741,11 @@
           <datalist id="dlCircuits">${vals('circuit').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
           <label>Zone contrôle <input type="text" data-k="zone" list="dlZones" placeholder="${target.length > 1 && !same('zone') ? '(plusieurs)' : 'ex. Z1, Classe 104'}" value="${esc(same('zone'))}"></label>
           <datalist id="dlZones">${vals('zone').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
+        const dh = (env.ext && env.ext.defaultHeight) || 3.048;
+        const hv = (x) => (x.mh != null ? x.mh : dh);
+        const sameH = target.every((x) => Math.abs(hv(x) - hv(target[0])) < 1e-6);
+        h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${target.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(target[0]), S.unit, false)) : ''}" title="Hauteur de montage (sert aussi au calcul des longueurs de câble)"></label>`;
+        h += hooks.propsExtra.map((f) => f(target)).join('');
       }
       const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
       h += `<label>Dimension <select data-k="mode">
@@ -1725,6 +1759,7 @@
               ${!round && isDefaults ? '<br>Astuce : cliquer-glisser pour poser à la longueur voulue.' : ''}</p>
             <label>Rotation (°) <input type="number" data-k="rot" step="15" value="${rotVal}"></label>
             <label class="inline"><input type="checkbox" data-k="showTag" ${show ? 'checked' : ''}> Afficher l'étiquette</label>`;
+      if (isDefaults) h += `<label>Hauteur (défaut) <input type="text" data-k="defaultHeight" value="${esc(LP.fmtDim((env.ext && env.ext.defaultHeight) || 3.048, S.unit, false))}" title="Hauteur de montage donnée aux prochains symboles posés"></label>`;
       if (!isDefaults) h += `<label>Opacité <input type="number" data-k="style.opacity" min="0.1" max="1" step="0.1" value="${st.opacity ?? 1}"></label>`;
     } else {
       h += colorField('Couleur', 'style.stroke', st.stroke || '#d00000');
@@ -1837,6 +1872,13 @@
       if (S.tool === 'symbol') {
         if (k === 'rot') symDefaults.rot = v;
         else if (k === 'showTag') symDefaults.showTag = v;
+        else if (k === 'defaultHeight') {
+          const m = LP.parseDim(v, S.unit, false);
+          if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »`); refreshProps(); return; }
+          env.ext.defaultHeight = m; LP.store.set('defaultHeight', m);
+          toast(`Hauteur par défaut : ${LP.fmtDim(m, S.unit, false)}`);
+          refreshProps();
+        }
         else if (S.currentSym && (k === 'mode' || k === 'dimL' || k === 'dimW')) {
           const sym = LP.migrateSym(S.currentSym);
           if (!setSymDim(sym, k, v, env.scaleFor(S.pageNum), null)) return;
@@ -1855,6 +1897,14 @@
     if (!propSnap) propSnap = snapshot();
     clearTimeout(propSnapTimer);
     propSnapTimer = setTimeout(() => { pushUndo(propSnap); propSnap = null; }, 600);
+    if (k === 'mh') {
+      const m = LP.parseDim(v, S.unit, false);
+      if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »\nExemples : 10'  9'-6"  3000 mm`); refreshProps(); return; }
+      pushUndo();
+      for (const a of target) if (a.type === 'symbol') { a.mh = m; touch(a); }
+      changed(); refreshProps();
+      return;
+    }
     if (k === 'mode' || k === 'dimL' || k === 'dimW') {
       const snap = snapshot();
       let ok = true;
@@ -2778,7 +2828,7 @@
   }
 
   /* ======================= Interface interne pour les modules ======================= */
-  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [] };
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {} };
   LP.app = {
     S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
     goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
@@ -2790,6 +2840,7 @@
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
+    topHit: (x, y) => topHit(x, y), cloneGroup, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,
     openMenu, closeMenu,
   };

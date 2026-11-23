@@ -70,6 +70,9 @@
     curve: '<path d="M3 18C6 4 12 4 13 12s6 8 8-6"/>',
     circle: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1"/>',
     arc: '<path d="M4 16a8 8 0 0116 0"/>',
+    cable: '<circle cx="4.5" cy="18" r="2"/><circle cx="19.5" cy="6" r="2"/><path d="M6 16.5C9 8 14 16 18 7.5"/>',
+    tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
+    height: '<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/><path d="M3 21h18" opacity=".6"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
   window.LP = window.LP || {};

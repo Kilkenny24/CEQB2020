@@ -166,6 +166,27 @@ avec un avertissement pour une zone qui contient des luminaires mais aucun déte
 une ligne sélectionne ces luminaires. Le plan peut être **coloré par circuit, zone ou type**, et le circuit **inscrit sous chaque
 luminaire** (ruban *Éclairage*) ; couleurs et inscriptions apparaissent aussi dans le PDF exporté.
 
+## Câblage (ruban *Câblage*, onglet *Câbles*)
+
+**Tracer** : choisissez le type dans le ruban (120 V, 0-10 V, CAT5e, DMX, 12 V, 24 V, 48 V, LAN), outil **Câble** (W), cliquez une
+composante puis la suivante ; le tracé continue en chaîne (pratique pour le DMX ou le 0-10 V). Échap termine la chaîne.
+
+- Chaque type a sa couleur **et** son motif de trait (lisible en noir et blanc) ; le type peut être inscrit sur le câble, avec sa longueur.
+- Les câbles sont **légèrement courbés** ; plusieurs câbles entre les mêmes composantes sont écartés de part et d'autre, et leurs
+  étiquettes décalées. La courbure se règle dans les propriétés du câble.
+- **Au plus 3 types de câbles par composante** (un 4e type est refusé).
+- Les câbles **suivent les symboles** déplacés ; supprimer un symbole supprime ses câbles ; copier un groupe copie les câbles entre
+  les copies ; une nouvelle révision reporte aussi les câbles.
+
+**Longueurs approximatives** : (longueur de la courbe sur le plan + différence de hauteur de montage entre les deux extrémités
+\+ 2 × raccordement) × (1 + réserve). Réserve (10 %) et raccordement (1') réglables dans l'onglet *Câbles*, qui donne le total par type
+et la liste des liens ; détail complet dans le CSV. Estimation pour la soumission, pas un relevé de chantier : le tracé réel
+(chemins de câbles, descentes, passages) n'est pas modélisé.
+
+**Hauteur de montage** : chaque symbole posé reçoit **10'-0"** par défaut (réglable : propriétés de l'outil Symbole ou onglet
+*Câbles*) ; modifiable par symbole ou sélection multiple dans *Propriétés*. Bouton **Hauteurs** : inscrit la hauteur sous chaque
+symbole, aussi dans le PDF exporté.
+
 ## Nouvelle révision (ruban *Révision*)
 
 Avec le PDF de la révision précédente ouvert, **Nouvelle révision** → choisissez le nouveau PDF :
@@ -241,7 +262,7 @@ Elles deviennent des annotations LumiPlan ordinaires : on peut les déplacer, mo
 `V` sélection · `H` main · `S` symbole · `L` ligne · `A` flèche · `R` rectangle · `E` ellipse · `C` nuage · `P` polyligne · `G` polygone ·
 `F` main levée · `I` surligneur · `T` texte · `Q` bulle · `O` note · `K` calibrer · `M` longueur · `N` longueur polyligne · `B` aire ·
 `Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `Ctrl+F` rechercher · `1`…`9` symboles favoris ·
-`[` `]` pivoter les symboles · flèches = déplacer.
+`W` câble · `[` `]` pivoter les symboles · flèches = déplacer.
 
 ## Structure
 
@@ -260,6 +281,7 @@ js/icons.js         jeu d'icônes vectorielles (LumiPlan et Atelier)
 js/schedule.js      tableau des luminaires, circuits et zones de contrôle
 js/textsearch.js    recherche de texte et lecture automatique de l'échelle
 js/revision.js      nouvelle révision : report des annotations et zones modifiées
+js/cables.js        câblage : types, tracé, longueurs, hauteurs de montage
 atelier.html        Atelier de symboles (css/atelier.css, js/atelier.js)
 dist/               versions autonomes (fichier unique) — régénérer avec : node tools/build-autonome.js
 tools/              script de construction des versions autonomes

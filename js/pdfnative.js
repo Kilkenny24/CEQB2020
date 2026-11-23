@@ -209,7 +209,7 @@
     }
     const contents = e.contents || stripRC(e.rc);
     const id = a.id;
-    Object.assign(a, b, { id, page });
+    Object.assign(a, b, { id: b.id || id, page });
     a.author = e.author || b.author;
     a.modified = e.modified || b.modified;
     // Texte / commentaire possiblement modifiés dans un autre logiciel
@@ -441,7 +441,7 @@
   const SUBTYPE = {
     line: 'Line', arrow: 'Line', length: 'Line', calibrate: 'Line', rect: 'Square', highlight: 'Square', cloud: 'Square',
     ellipse: 'Circle', polyline: 'PolyLine', polylength: 'PolyLine', polygon: 'Polygon', area: 'Polygon', ink: 'Ink',
-    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp',
+    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine',
   };
   // Clés de géométrie / apparence réécrites lorsqu'une annotation importée est modifiée
   const REWRITE = ['AP', 'AS', 'RC', 'DS', 'DA', 'RD', 'L', 'LE', 'Vertices', 'InkList', 'QuadPoints', 'CL', 'IC', 'BE', 'BS', 'Border', 'CA'];
@@ -478,7 +478,7 @@
     set('Rect', ctx.obj(rect));
     set('M', L.PDFString.of(pdfDate(a.modified)));
     if (a.author) set('T', hexT(a.author));
-    const auto = ['length', 'polylength', 'area'].includes(a.type) && !a.comment ? LP.describeAnnotation(a, W.env) : null;
+    const auto = ['length', 'polylength', 'area', 'cable'].includes(a.type) && !a.comment ? LP.describeAnnotation(a, W.env) : null;
     const contents = a.type === 'text' || a.type === 'callout' ? a.text : (auto != null ? auto : a.comment);
     set('Contents', hexT(contents));
     const subj = a.type === 'symbol' ? `${a.sym.name}${a.tag ? ' - ' + a.tag : ''}` : (a.subject || LP.TYPE_LABELS[a.type]);
@@ -551,6 +551,10 @@
         break;
       case 'schedule':
         set('Name', N('LumiPlanTableau'));
+        break;
+      case 'cable':
+        set('Vertices', ctx.obj(flat(W, LP.cableGeom(a, W.env).pts)));
+        set('BS', ctx.obj(bs));
         break;
     }
     // Données LumiPlan (symbole, étiquette, style exact) pour la réouverture
