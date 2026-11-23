@@ -166,6 +166,24 @@ avec un avertissement pour une zone qui contient des luminaires mais aucun déte
 une ligne sélectionne ces luminaires. Le plan peut être **coloré par circuit, zone ou type**, et le circuit **inscrit sous chaque
 luminaire** (ruban *Éclairage*) ; couleurs et inscriptions apparaissent aussi dans le PDF exporté.
 
+## Petits projets : nouveau plan, locaux, portes, plafonds (ruban *Espace*)
+
+**Nouveau plan** (ruban *Fichier* ou écran d'accueil) : nom du projet, format (Lettre à ARCH E, A3 à A0), orientation,
+échelle (1/4" = 1'-0" par défaut), **grille de référence** (1' × 1' avec repère aux 5', 6", 1 m, 0,5 m ou aucune) et nombre de
+pages. La feuille est générée avec un cartouche simple et une échelle graphique ; elle est **calibrée d'office**, et LumiPlan
+retrouve l'échelle et la grille en rouvrant ce PDF. Enregistrez le projet (Ctrl+S) ; *Exporter* produit le PDF avec vos dessins.
+
+- **Local** (U) : *Rectangle* (2 clics aux coins) ou *Polygone* (clics ; Entrée, double-clic ou clic sur le premier sommet pour
+  fermer ; Retour arrière retire un sommet). Les dimensions s'affichent pendant le tracé ; **magnétisme** sur la grille de 1'
+  (100 mm en métrique). Murs à l'échelle (6" par défaut), **hauteur de plafond 10'-0"** par défaut ; nom, superficie et hauteur
+  inscrits au centre. Les sommets se déplacent avec leurs poignées.
+- **Porte** (D) : clic sur un mur ; largeur 3'-0" par défaut ; ouverture vers l'intérieur ou l'extérieur, côté des pentures et
+  position réglables (propriétés de la porte).
+- **Plafond** (J) : choisissez 2 × 2 ou 2 × 4 dans le ruban, cliquez dans un local : grille centrée et découpée selon la forme
+  du local ; orientation (horizontale / verticale) dans les propriétés du local.
+- Un **luminaire posé dans un local** prend la hauteur de plafond du local ; en changeant la hauteur d'un local, cochez
+  « Appliquer la hauteur aux luminaires du local » pour les mettre à jour.
+
 ## Câblage (ruban *Câblage*, onglet *Câbles*)
 
 **Tracer** : choisissez le type dans le ruban (120 V, 0-10 V, CAT5e, DMX, 12 V, 24 V, 48 V, LAN), outil **Câble** (W), cliquez une
@@ -265,7 +283,7 @@ Elles deviennent des annotations LumiPlan ordinaires : on peut les déplacer, mo
 `V` sélection · `H` main · `S` symbole · `L` ligne · `A` flèche · `R` rectangle · `E` ellipse · `C` nuage · `P` polyligne · `G` polygone ·
 `F` main levée · `I` surligneur · `T` texte · `Q` bulle · `O` note · `K` calibrer · `M` longueur · `N` longueur polyligne · `B` aire ·
 `Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `Ctrl+F` rechercher · `1`…`9` symboles favoris ·
-`W` câble · `[` `]` pivoter les symboles · flèches = déplacer.
+`W` câble · `U` local · `D` porte · `J` plafond · `[` `]` pivoter les symboles · flèches = déplacer.
 
 ## Structure
 
@@ -285,6 +303,7 @@ js/schedule.js      tableau des luminaires, circuits et zones de contrôle
 js/textsearch.js    recherche de texte et lecture automatique de l'échelle
 js/revision.js      nouvelle révision : report des annotations et zones modifiées
 js/cables.js        câblage : types, tracé, longueurs, hauteurs de montage
+js/space.js         petits projets : nouveau plan quadrillé, locaux, portes, grilles de plafond
 atelier.html        Atelier de symboles (css/atelier.css, js/atelier.js)
 dist/               versions autonomes (fichier unique) — régénérer avec : node tools/build-autonome.js
 tools/              script de construction des versions autonomes

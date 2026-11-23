@@ -441,7 +441,7 @@
   const SUBTYPE = {
     line: 'Line', arrow: 'Line', length: 'Line', calibrate: 'Line', rect: 'Square', highlight: 'Square', cloud: 'Square',
     ellipse: 'Circle', polyline: 'PolyLine', polylength: 'PolyLine', polygon: 'Polygon', area: 'Polygon', ink: 'Ink',
-    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine',
+    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine', room: 'Polygon', door: 'Stamp',
   };
   // Clés de géométrie / apparence réécrites lorsqu'une annotation importée est modifiée
   const REWRITE = ['AP', 'AS', 'RC', 'DS', 'DA', 'RD', 'L', 'LE', 'Vertices', 'InkList', 'QuadPoints', 'CL', 'IC', 'BE', 'BS', 'Border', 'CA'];
@@ -551,6 +551,13 @@
         break;
       case 'schedule':
         set('Name', N('LumiPlanTableau'));
+        break;
+      case 'room':
+        set('Vertices', ctx.obj(flat(W, a.pts)));
+        set('BS', ctx.obj(bs));
+        break;
+      case 'door':
+        set('Name', N('LumiPlanPorte'));
         break;
       case 'cable':
         set('Vertices', ctx.obj(flat(W, LP.cableGeom(a, W.env).pts)));

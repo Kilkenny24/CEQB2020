@@ -70,6 +70,9 @@
     { id: 'polylength', key: 'n', label: 'Long. poly', icon: '<path d="M3 18l6-10 6 7 6-9"/><circle cx="3" cy="18" r="1"/><circle cx="21" cy="6" r="1"/>' },
     { id: 'area', key: 'b', label: 'Aire', icon: '<path d="M4 18l2-12 13 2-2 10z"/><path d="M8 14l3-3M11 15l4-4"/>' },
     { id: 'cable', key: 'w', label: 'Câble', icon: '' },
+    { id: 'room', key: 'u', label: 'Local', icon: '' },
+    { id: 'door', key: 'd', label: 'Porte', icon: '' },
+    { id: 'ceiling', key: 'j', label: 'Plafond', icon: '' },
   ];
   const TWO_POINT = new Set(['line', 'arrow', 'rect', 'ellipse', 'cloud', 'highlight', 'text', 'length', 'calibrate']);
   const MULTI_POINT = new Set(['polyline', 'polygon', 'polylength', 'area']);
@@ -426,7 +429,7 @@
       octx.setLineDash([4 / S.zoom, 3 / S.zoom]);
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
-      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) {
+      if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) {
         for (const p of a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -522,7 +525,10 @@
     a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
-    if (!LP.isControlSym(sym)) a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage des luminaires (m)
+    if (!LP.isControlSym(sym)) {
+      const room = env.ext && env.ext.roomAt ? env.ext.roomAt(S.pageNum, a.pts[0]) : null;
+      a.mh = room ? (room.h != null ? room.h : 10 * 0.3048) : (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage des luminaires (m)
+    }
     pushUndo();
     S.annots.push(a);
     changed();
@@ -595,7 +601,7 @@
   function handleHit(x, y) {
     if (S.sel.size !== 1) return null;
     const a = S.annots.find((q) => S.sel.has(q.id));
-    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule'].includes(a.type)) return null;
+    if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) return null;
     const r = 6 / S.zoom;
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
@@ -1146,7 +1152,7 @@
       const ids = new Set(AR.src.map((a) => a.id));
       S.annots = S.annots.filter((a) => !ids.has(a.id));
     }
-    S.annots = created.filter((a) => a.type === 'cable').concat(S.annots, created.filter((a) => a.type !== 'cable'));
+    created.forEach(insertLayer);
     S.sel = new Set(created.map((a) => a.id));
     if (AR.kind === 'grid') AR.src.forEach((a) => S.sel.add(a.id));
     const n = created.length;
@@ -1254,7 +1260,7 @@
     pushUndo();
     const gone = new Set(S.sel);
     const linked = S.annots.filter((a) => a.type === 'cable' && !gone.has(a.id) && (gone.has(a.from) || gone.has(a.to))).length;
-    S.annots = S.annots.filter((a) => !gone.has(a.id) && !(a.type === 'cable' && (gone.has(a.from) || gone.has(a.to))));
+    S.annots = S.annots.filter((a) => !gone.has(a.id) && !(a.type === 'cable' && (gone.has(a.from) || gone.has(a.to))) && !(a.type === 'door' && gone.has(a.room)));
     if (linked) toast(`${linked} câble(s) relié(s) supprimé(s) aussi`);
     S.sel.clear();
     changed(); refreshProps();
@@ -1269,6 +1275,15 @@
     return a;
   }
 
+  const LAYER = { room: 0, door: 1, cable: 2 };
+  const layerOf = (a) => (LAYER[a.type] != null ? LAYER[a.type] : 3);
+  // Insère une annotation à sa couche (les locaux restent sous les portes, câbles et symboles)
+  function insertLayer(a) {
+    const r = layerOf(a);
+    let i = 0;
+    while (i < S.annots.length && layerOf(S.annots[i]) <= r) i++;
+    S.annots.splice(i, 0, a);
+  }
   function cloneGroup(list) {
     const map = new Map();
     const out = [];
@@ -1278,7 +1293,9 @@
       const c = cloneAnnot(a); c.from = map.get(a.from); c.to = map.get(a.to);
       out.unshift(c); // sous les symboles
     }
-    return out;
+    // Portes : rattachées au local copié (sinon ignorées)
+    for (const c of out) if (c.type === 'door') c.room = map.get(c.room);
+    return out.filter((c) => c.type !== 'door' || c.room);
   }
 
   function copySel() {
@@ -1295,7 +1312,7 @@
       a.page = S.pageNum;
       a.pts.forEach((q) => { q[0] += off; q[1] += off; });
       a.created = a.modified = new Date().toISOString();
-      if (a.type === 'cable') S.annots.unshift(a); else S.annots.push(a);
+      insertLayer(a);
       S.sel.add(a.id);
     }
     S.clipboard.forEach((c) => { c.pts.forEach((q) => { q[0] += off; q[1] += off; }); c.page = S.pageNum; });
@@ -1322,6 +1339,7 @@
   /* ======================= Ruban ======================= */
   const RIBBON = [
     { title: 'Fichier', items: [
+      { big: 'btnNewSheet', icon: 'newsheet', label: 'Nouveau', title: 'Nouveau plan : feuille vierge ou avec grille de référence, déjà à l\'échelle' },
       { big: 'btnOpenPdf', icon: 'open', label: 'Ouvrir', title: 'Ouvrir un PDF (Ctrl+O)' },
       { split: 'btnSaveProj', icon: 'save', label: 'Enregistrer', title: 'Enregistrer le projet (Ctrl+S)', menu: [
         { id: 'btnSaveProjAs', icon: 'save', label: 'Enregistrer sous…', sub: 'Choisir un autre fichier projet (Ctrl+Maj+S)' },
@@ -1354,12 +1372,24 @@
       { tool: 'symbol', big: true },
       { col: [
         { action: 'grid', icon: 'grid', label: 'Réseau grille', title: 'Réseau grille (array grid) : colonnes × rangées à espacement donné' },
-        { action: 'zone', icon: 'zone', label: 'Réseau espacement', title: 'Réseau par espacement (array spacing) : remplir une pièce ou une ligne' },
-        { id: 'btnPlaceSchedule', icon: 'schedule', label: 'Placer le tableau', title: 'Placer le tableau des luminaires sur la feuille' },
+        { action: 'zone', icon: 'zone', label: 'Réseau esp.', title: 'Réseau par espacement (array spacing) : remplir une pièce ou une ligne' },
+        { id: 'btnPlaceSchedule', icon: 'schedule', label: 'Tableau', title: 'Placer le tableau des luminaires sur la feuille' },
       ] },
       { col: [
         { select: 'colorBy', icon: 'palette', label: 'Couleurs', options: [['', 'Normales'], ['circuit', 'Par circuit'], ['zone', 'Par zone de contrôle'], ['tag', 'Par type']] },
         { id: 'btnShowCircuit', icon: 'circuit', label: 'Étiq. circuits', title: 'Afficher le circuit sous chaque luminaire (visible aussi dans le PDF exporté)' },
+      ] },
+    ] },
+    { title: 'Espace', items: [
+      { tool: 'room', big: true },
+      { col: [
+        { tool: 'door' },
+        { tool: 'ceiling' },
+        { id: 'btnGridSnap', icon: 'magnet', label: 'Magnétisme', title: 'Accrocher les locaux à la grille de 1\' (ou 100 mm)' },
+      ] },
+      { col: [
+        { select: 'roomMode', icon: 'room', label: 'Forme du local', options: [['rect', 'Rectangle'], ['poly', 'Polygone']] },
+        { select: 'ceilType', icon: 'ceiling', label: 'Grille de plafond', options: [['2x2', '2 × 2'], ['2x4', '2 × 4'], ['', 'Aucune']] },
       ] },
     ] },
     { title: 'Câblage', items: [
@@ -2845,7 +2875,7 @@
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
-    topHit: (x, y) => topHit(x, y), cloneGroup, setStatusHint: (t) => { $('#statusTool').textContent = t; },
+    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,
     openMenu, closeMenu,
   };

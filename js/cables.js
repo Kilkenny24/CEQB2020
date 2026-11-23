@@ -130,7 +130,7 @@
       c.ctype = t; c.from = start.id; c.to = sym.id;
       c.style = { width: 1, opacity: 1 };
       app.pushUndo();
-      S.annots.unshift(c); // sous les symboles
+      app.insertLayer(c); // sous les symboles, au-dessus des locaux
       app.changed();
       start = sym; // chaînage
       const L = lengthOf(c);

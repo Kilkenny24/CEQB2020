@@ -205,6 +205,7 @@
     // Câbles : reliés aux copies reportées (ceux dont une extrémité n'est pas reportée sont abandonnés)
     for (let i = moved.length - 1; i >= 0; i--) {
       const c = moved[i];
+      if (c.type === 'door') { if (idMap.has(c.room)) c.room = idMap.get(c.room); else moved.splice(i, 1); continue; }
       if (c.type !== 'cable') continue;
       if (idMap.has(c.from) && idMap.has(c.to)) { c.from = idMap.get(c.from); c.to = idMap.get(c.to); } else moved.splice(i, 1);
     }

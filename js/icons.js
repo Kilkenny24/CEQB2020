@@ -73,6 +73,11 @@
     cable: '<circle cx="4.5" cy="18" r="2"/><circle cx="19.5" cy="6" r="2"/><path d="M6 16.5C9 8 14 16 18 7.5"/>',
     tag: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
     height: '<path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/><path d="M3 21h18" opacity=".6"/>',
+    newsheet: '<path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/>',
+    room: '<path d="M4 4h16v16H4z" stroke-width="2.4"/><path d="M8 20v-4M4 12h4"/>',
+    door: '<path d="M4 20h6M14 20h6" stroke-width="2.4"/><path d="M10 20V10"/><path d="M10 10a10 10 0 0110 10"/>',
+    ceiling: '<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18" opacity=".7"/>',
+    magnet: '<path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
   window.LP = window.LP || {};

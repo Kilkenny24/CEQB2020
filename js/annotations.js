@@ -12,7 +12,7 @@
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble', room: 'Local', door: 'Porte',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -176,6 +176,14 @@
     }
     if (a.type === 'cable') {
       drawCable(R, a, env);
+      return;
+    }
+    if (a.type === 'room') {
+      drawRoom(R, a, env);
+      return;
+    }
+    if (a.type === 'door') {
+      drawDoor(R, a, env);
       return;
     }
     if (a.type === 'schedule') {
@@ -349,6 +357,17 @@
         const [bx, by, bw, bh] = bbox(a);
         return x >= bx - tol && x <= bx + bw + tol && y >= by - tol && y <= by + bh + tol;
       }
+      case 'room': {
+        const wt = roomWallPt(a, LP.env) / 2;
+        for (let i = 0; i < p.length; i++) if (distSeg(x, y, p[i], p[(i + 1) % p.length]) <= tol + wt) return true;
+        // Étiquette au centre
+        const c = polyCentroid(p);
+        return Math.abs(x - c[0]) < 30 && Math.abs(y - c[1]) < 14;
+      }
+      case 'door': {
+        const g = doorGeom(a, LP.env);
+        return !!g && Math.hypot(x - g.c[0], y - g.c[1]) <= g.w * 0.75 + tol;
+      }
       case 'cable': {
         const g = cableGeom(a, LP.env);
         for (let i = 1; i < g.pts.length; i++) if (distSeg(x, y, g.pts[i - 1], g.pts[i]) <= tol + 1) return true;
@@ -379,6 +398,141 @@
       }
     }
     return false;
+  }
+
+  /*
+   * Locaux (petits projets) : polygone de murs à l'échelle, grille de plafond 2×2 / 2×4 centrée,
+   * étiquette (nom, superficie, hauteur). Portes : ouverture dans un mur d'un local, battant et arc.
+   */
+  const FT = 0.3048;
+  const mppOf = (a, env) => { const sc = env && env.scaleFor ? env.scaleFor(a.page) : null; return sc ? sc.mpp : null; };
+  function polyCentroid(pts) {
+    let A = 0, cx = 0, cy = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length], f = p[0] * q[1] - q[0] * p[1];
+      A += f; cx += (p[0] + q[0]) * f; cy += (p[1] + q[1]) * f;
+    }
+    if (Math.abs(A) < 1e-9) return centroid(pts);
+    return [cx / (3 * A), cy / (3 * A)];
+  }
+  // Intervalles d'une droite (horizontale ou verticale) à l'intérieur du polygone
+  function clipLine(pts, vertical, c) {
+    const xs = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      const a = vertical ? p[0] : p[1], b = vertical ? q[0] : q[1];
+      if ((a <= c && b > c) || (b <= c && a > c)) {
+        const t = (c - a) / (b - a);
+        xs.push(vertical ? p[1] + t * (q[1] - p[1]) : p[0] + t * (q[0] - p[0]));
+      }
+    }
+    xs.sort((x, y) => x - y);
+    const out = [];
+    for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
+    return out;
+  }
+  function roomWallPt(a, env) { const m = mppOf(a, env); return m ? (a.wt != null ? a.wt : 0.5 * FT) / m : 4; }
+  function drawRoom(R, a, env) {
+    const pts = a.pts;
+    if (pts.length < 3) return;
+    const mpp = mppOf(a, env);
+    const wt = roomWallPt(a, env);
+    R.save();
+    R.setDash([]);
+    // Grille de plafond (sous les murs)
+    if (a.ceil && a.ceil.type && mpp) {
+      const tw = (2 * FT) / mpp, th = ((a.ceil.type === '2x4' ? 4 : 2) * FT) / mpp;
+      const [sx, sy] = a.ceil.rot === 90 ? [th, tw] : [tw, th];
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      // Teinte bleutée, distincte de la grille de référence de la feuille
+      R.setStroke('#5b84b1');
+      R.setLineWidth(Math.max(0.5, wt * 0.1));
+      R.beginPath();
+      for (let x = cx - Math.ceil((cx - x0) / sx) * sx; x <= x1; x += sx) for (const [u, v] of clipLine(pts, true, x)) { R.moveTo(x, u); R.lineTo(x, v); }
+      for (let y = cy - Math.ceil((cy - y0) / sy) * sy; y <= y1; y += sy) for (const [u, v] of clipLine(pts, false, y)) { R.moveTo(u, y); R.lineTo(v, y); }
+      R.stroke();
+    }
+    // Murs
+    R.setStroke(a.style && a.style.stroke ? a.style.stroke : '#3a3f47');
+    R.setLineWidth(wt);
+    R.beginPath(); R.polyPath(pts, true); R.stroke();
+    // Étiquette
+    if (a.showLabel !== false) {
+      const c = polyCentroid(pts);
+      const lines = [];
+      if (a.name) lines.push([a.name, true]);
+      if (mpp) {
+        const unit = env.unit ? env.unit() : 'ft';
+        lines.push([LP.fmtArea(LP.polyArea(pts) * mpp * mpp, unit), false]);
+        lines.push(['H ' + LP.fmtDim(a.h != null ? a.h : 10 * FT, unit, false), false]);
+      }
+      const fs = a.fs || 8;
+      // Fond blanc derrière l'étiquette (lisible par-dessus la grille de plafond)
+      const lw = Math.max(...lines.map(([t, b], i) => R.measure(t, i ? fs * 0.85 : fs, b)), 1);
+      const lh = lines.length * fs * 1.2;
+      R.setFill('#ffffff');
+      R.beginPath(); R.rectPath(c[0] - lw / 2 - fs * 0.3, c[1] - lh / 2 - fs * 0.25, lw + fs * 0.6, lh + fs * 0.2); R.fill();
+      lines.forEach(([t, bold], i) => {
+        const w = R.measure(t, i ? fs * 0.85 : fs, bold);
+        R.text(t, c[0] - w / 2, c[1] + (i - (lines.length - 1) / 2) * fs * 1.2 + fs * 0.35, i ? fs * 0.85 : fs, '#3a3f47', bold);
+      });
+    }
+    R.restore();
+  }
+  // Géométrie d'une porte (coordonnées de page)
+  function doorGeom(a, env) {
+    const ext = (env && env.ext) || {};
+    const room = ext.roomById ? ext.roomById(a.room) : null;
+    if (!room || room.pts.length < 3) return null;
+    const n = room.pts.length, i = Math.min(a.seg, n - 1);
+    const p = room.pts[i], q = room.pts[(i + 1) % n];
+    const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+    const ux = (q[0] - p[0]) / L, uy = (q[1] - p[1]) / L;
+    const mpp = mppOf(room, env);
+    const w = mpp ? (a.w != null ? a.w : 3 * FT) / mpp : 20;
+    const half = Math.min(w / 2, L / 2);
+    const t = Math.max(half / L, Math.min(1 - half / L, a.t));
+    const c = [p[0] + ux * L * t, p[1] + uy * L * t];
+    // Normale intérieure
+    let nx = -uy, ny = ux;
+    if (!inPoly(c[0] + nx * 2, c[1] + ny * 2, room.pts)) { nx = -nx; ny = -ny; }
+    const A = [c[0] - ux * half, c[1] - uy * half], B = [c[0] + ux * half, c[1] + uy * half];
+    const wt = roomWallPt(room, env);
+    a.pts = [c];
+    return { c, A, B, ux, uy, nx, ny, w: 2 * half, wt, room };
+  }
+  function drawDoor(R, a, env) {
+    const g = doorGeom(a, env);
+    if (!g) return;
+    const { A, B, nx, ny, wt } = g;
+    const h = wt / 2 + 0.6;
+    R.save();
+    R.setDash([]);
+    // Ouverture : efface le mur sur la largeur de la porte
+    R.setFill('#ffffff');
+    R.beginPath(); R.polyPath([[A[0] + nx * h, A[1] + ny * h], [B[0] + nx * h, B[1] + ny * h], [B[0] - nx * h, B[1] - ny * h], [A[0] - nx * h, A[1] - ny * h]], true); R.fill();
+    const col = a.style && a.style.stroke ? a.style.stroke : '#3a3f47';
+    R.setStroke(col);
+    R.setLineWidth(Math.max(0.4, wt * 0.12));
+    // Jambages
+    R.beginPath();
+    R.moveTo(A[0] + nx * wt / 2, A[1] + ny * wt / 2); R.lineTo(A[0] - nx * wt / 2, A[1] - ny * wt / 2);
+    R.moveTo(B[0] + nx * wt / 2, B[1] + ny * wt / 2); R.lineTo(B[0] - nx * wt / 2, B[1] - ny * wt / 2);
+    R.stroke();
+    // Battant (pentures en A ou B, ouverture vers l'intérieur ou l'extérieur) et arc
+    const s = a.swing === 'out' ? -1 : 1;
+    const hinge = a.hinge === 'b' ? B : A, other = a.hinge === 'b' ? A : B;
+    const leaf = [hinge[0] + nx * s * g.w, hinge[1] + ny * s * g.w];
+    R.setLineWidth(Math.max(0.5, wt * 0.16));
+    R.beginPath(); R.moveTo(hinge[0], hinge[1]); R.lineTo(leaf[0], leaf[1]); R.stroke();
+    let a0 = (Math.atan2(other[1] - hinge[1], other[0] - hinge[0]) * 180) / Math.PI;
+    let a1 = (Math.atan2(leaf[1] - hinge[1], leaf[0] - hinge[0]) * 180) / Math.PI;
+    if (((a1 - a0 + 360) % 360) > 180) [a0, a1] = [a1, a0];
+    R.setLineWidth(Math.max(0.25, wt * 0.07));
+    R.beginPath(); LP.arcPath(R, hinge[0], hinge[1], g.w, a0, a1, true); R.stroke();
+    R.restore();
   }
 
   /*
@@ -537,6 +691,11 @@
   function bbox(a) {
     if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
     if (a.type === 'schedule') { const L = scheduleLayout(a, LP.env, null); return [a.pts[0][0], a.pts[0][1], L.w, L.h]; }
+    if (a.type === 'door') {
+      const g = doorGeom(a, LP.env);
+      if (!g) return [a.pts[0][0] - 10, a.pts[0][1] - 10, 20, 20];
+      return [g.c[0] - g.w, g.c[1] - g.w, 2 * g.w, 2 * g.w];
+    }
     if (a.type === 'cable') {
       const g = cableGeom(a, LP.env);
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -576,6 +735,7 @@
     if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
     if (['length', 'calibrate', 'polylength', 'area'].includes(a.type)) m += (s.fontSize || 9) * 7;
     if (a.type === 'cable') m += 30; // étiquette du câble
+    if (a.type === 'room') m += roomWallPt(a, LP.env) + 4;
     return [x - m, y - m, w + 2 * m, h + 2 * m];
   }
 
@@ -593,6 +753,11 @@
       case 'text': case 'callout': return (a.text || '').slice(0, 60);
       case 'note': return (a.comment || '').slice(0, 60);
       case 'schedule': return a.scope === 'page' ? 'page courante' : 'tout le projet';
+      case 'room': {
+        const sc = env && env.scaleFor(a.page);
+        return `${a.name || 'Local'}${sc ? ' — ' + LP.fmtArea(LP.polyArea(a.pts) * sc.mpp * sc.mpp, sc.unit) : ''}${a.ceil && a.ceil.type ? ' — plafond ' + a.ceil.type.replace('x', '×') : ''}`;
+      }
+      case 'door': return `${LP.fmtDim(a.w != null ? a.w : 3 * FT, (env && env.unit ? env.unit() : 'ft'), false)}, ${a.swing === 'out' ? 'vers l\'extérieur' : 'vers l\'intérieur'}`;
       case 'cable': return LP.env && LP.env.ext && LP.env.ext.cableLabel ? LP.env.ext.cableLabel(a, true) : String(a.ctype || '');
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
     }
@@ -622,5 +787,5 @@
     return null;
   }
 
-  Object.assign(LP, { cableGeom, symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
+  Object.assign(LP, { doorGeom, polyCentroid, roomWallPt, inPoly, cableGeom, symDimText, TYPE_LABELS, MARKUP_LABELS, NOTE_SIZE, visualBounds, uid, drawAnnotation: draw, hitAnnotation: hit, bboxAnnotation: bbox, describeAnnotation: describe, quantityAnnotation: quantity });
 })();
