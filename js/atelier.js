@@ -167,11 +167,14 @@
     ctx.fillRect(box.cx - box.bw / 2, box.cy - box.bh / 2, box.bw, box.bh);
     const c = gridCell();
     ctx.lineWidth = 1;
+    // Couleurs de grille selon le thème (discrètes hors de la boîte du symbole)
+    const dark = document.body.dataset.theme === 'dark';
+    const gridLine = dark ? 'rgba(255,255,255,.06)' : '#eef0f3', gridAxis = dark ? 'rgba(255,255,255,.18)' : '#c9cdd4';
     const x0 = box.cx - box.bw / 2 - c * 4, x1 = box.cx + box.bw / 2 + c * 4;
     const y0 = box.cy - box.bh / 2 - c * 4, y1 = box.cy + box.bh / 2 + c * 4;
     for (let i = -200; i <= 200; i++) {
       const x = box.cx + i * c, y = box.cy + i * c;
-      ctx.strokeStyle = i === 0 ? '#c9cdd4' : '#eef0f3';
+      ctx.strokeStyle = i === 0 ? gridAxis : gridLine;
       if (x >= x0 && x <= x1) { ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke(); }
       if (y >= y0 && y <= y1) { ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); }
     }
@@ -1377,6 +1380,8 @@
   }
 
   async function init() {
+    document.querySelectorAll('[data-icon]').forEach((e) => { e.innerHTML = LP.icon(e.dataset.icon); });
+    try { const t = await LP.store.get('theme'); if (t === 'dark') document.body.dataset.theme = 'dark'; } catch (e) { /* thème par défaut */ }
     buildTools();
     bind();
     await loadBank();

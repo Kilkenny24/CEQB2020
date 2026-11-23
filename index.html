@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LumiPlan — Annotation de plans</title>
+<title>LumiPlan — Annotation de plans d'éclairage</title>
 <link rel="stylesheet" href="css/app.css">
 <script id="loadCheck">
   // Affiché seulement si les dossiers css/ js/ vendor/ sont introuvables
@@ -21,64 +21,44 @@
 </script>
 </head>
 <body>
-<header id="topbar">
-  <div class="brand">LumiPlan</div>
-  <div class="group">
-    <button id="btnOpenPdf" title="Ouvrir un PDF (Ctrl+O)">📂 Ouvrir PDF</button>
-    <button id="btnOpenProj" title="Ouvrir un projet d'annotations (.lumiplan.json)">📁 Ouvrir projet</button>
-    <button id="btnSaveProj" title="Enregistrer le projet (Ctrl+S)">💾 Enregistrer</button>
-    <button id="btnSaveProjAs" title="Enregistrer sous… (Ctrl+Maj+S)">Enregistrer sous…</button>
-    <button id="btnSaveBundle" title="Projet + PDF dans un seul fichier">Projet + PDF</button>
+<header id="titlebar">
+  <div class="tb-brand"><span class="logo"></span><span class="name">LumiPlan</span></div>
+  <div class="tb-doc"><span id="docTitle">Aucun document</span><span id="docPage"></span></div>
+  <div class="tb-search">
+    <span class="sicon"></span>
+    <input id="searchInput" type="search" placeholder="Rechercher dans le PDF (Ctrl+F)" autocomplete="off" spellcheck="false">
+    <div id="searchResults" hidden></div>
   </div>
-  <div class="group">
-    <button id="btnExportPdf" title="Exporter un PDF avec des annotations natives, modifiables dans Bluebeam / Acrobat">⤓ PDF annoté</button>
-    <button id="btnExportFlat" title="Exporter un PDF où les annotations font partie du dessin (non modifiables)">⤓ PDF aplati</button>
-    <button id="btnExportCsv" title="Exporter le décompte et la liste (CSV pour Excel)">⤓ CSV</button>
-  </div>
-  <div class="group">
-    <button id="btnUndo" title="Annuler (Ctrl+Z)">↶</button>
-    <button id="btnRedo" title="Rétablir (Ctrl+Y)">↷</button>
-  </div>
-  <div class="group">
-    <button id="btnPrev" title="Page précédente (Pg préc.)">◀</button>
-    <input id="pageInput" type="text" value="–" size="4" title="Page">
-    <span id="pageCount">/ 0</span>
-    <button id="btnNext" title="Page suivante (Pg suiv.)">▶</button>
-  </div>
-  <div class="group">
-    <button id="btnZoomOut" title="Zoom arrière (-)">−</button>
-    <span id="zoomLabel">100 %</span>
-    <button id="btnZoomIn" title="Zoom avant (+)">+</button>
-    <button id="btnFit" title="Ajuster à la fenêtre (0)">Ajuster</button>
-  </div>
-  <div class="group">
-    <a class="btnlink" href="atelier.html" target="_blank" title="Créer des symboles avancés (formes, texte, images) et les envoyer dans LumiPlan">🎨 Atelier de symboles</a>
-  </div>
-  <div class="group right">
-    <label class="author">Auteur <input id="authorInput" type="text" size="10"></label>
-    <button id="btnHelp" title="Raccourcis clavier">?</button>
+  <div class="tb-right">
+    <span id="saveState" class="save-state" title="État de l'enregistrement du projet"></span>
+    <label class="tb-author" title="Votre nom : inscrit sur vos annotations et réponses"><span>Auteur</span><input id="authorInput" type="text" placeholder="Votre nom"></label>
+    <a id="lnkAtelier" class="tb-btn" href="atelier.html" target="_blank" title="Atelier de symboles"></a>
+    <button id="btnTheme" class="tb-btn" title="Thème clair / sombre"></button>
+    <button id="btnHelp" class="tb-btn" title="Raccourcis clavier"></button>
   </div>
 </header>
 
-<nav id="tools"></nav>
+<nav id="ribbon"></nav>
 
 <main id="main">
   <aside id="left">
     <div class="tabs">
-      <button data-tab="symbols" class="active">Symboles</button>
-      <button data-tab="list">Annotations</button>
-      <button data-tab="pages">Pages</button>
+      <button data-tab="symbols" class="active" title="Bibliothèque de symboles"><span data-icon="library"></span>Symboles</button>
+      <button data-tab="list" title="Annotations, décompte et quantités"><span data-icon="list"></span>Liste</button>
+      <button data-tab="schedule" title="Tableau des luminaires"><span data-icon="schedule"></span>Tableau</button>
+      <button data-tab="circuits" title="Circuits et zones de contrôle"><span data-icon="circuit"></span>Circuits</button>
+      <button data-tab="pages" title="Pages et révision"><span data-icon="pages"></span>Pages</button>
     </div>
     <section id="tab-symbols" class="tab active">
       <div class="row">
-        <button id="btnNewSymbol">+ Nouveau symbole</button>
+        <button id="btnNewSymbol" class="primary"><span data-icon="plus"></span>Nouveau symbole</button>
       </div>
       <div class="row small">
-        <button id="btnLibImport">Importer biblio.</button>
-        <button id="btnLibExport">Exporter biblio.</button>
-        <button id="btnLibReset" title="Restaurer la bibliothèque par défaut">Réinit.</button>
+        <button id="btnLibImport">Importer</button>
+        <button id="btnLibExport">Exporter</button>
+        <button id="btnLibReset" title="Restaurer la bibliothèque par défaut">Réinitialiser</button>
       </div>
-      <input id="symFilter" type="search" placeholder="Filtrer…">
+      <input id="symFilter" type="search" placeholder="Filtrer les symboles…">
       <div id="symbolList"></div>
     </section>
     <section id="tab-list" class="tab">
@@ -86,13 +66,17 @@
       <table id="countTable"><thead><tr><th>Symbole</th><th>Type</th><th>Page</th><th>Total</th></tr></thead><tbody></tbody></table>
       <h3>Quantités mesurées</h3>
       <table id="qtyTable"><thead><tr><th>Mesure</th><th>Page</th><th>Total</th></tr></thead><tbody></tbody></table>
-      <h3>Liste
+      <h3>Annotations
         <select id="listScope"><option value="page">Page courante</option><option value="all">Toutes les pages</option></select>
       </h3>
       <select id="authorFilter"><option value="*">Tous les auteurs</option></select>
       <div id="annotList"></div>
     </section>
+    <section id="tab-schedule" class="tab"></section>
+    <section id="tab-circuits" class="tab"></section>
     <section id="tab-pages" class="tab">
+      <div id="revisionBox"></div>
+      <h3>Pages</h3>
       <div id="pageList"></div>
     </section>
   </aside>
@@ -101,11 +85,22 @@
     <canvas id="baseCanvas"></canvas>
     <canvas id="overlayCanvas"></canvas>
     <textarea id="textEditor" spellcheck="true"></textarea>
+    <div id="scaleBanner" hidden></div>
     <div id="dropHint">
-      <div>
-        <h1>LumiPlan</h1>
-        <p>Glissez un PDF ici ou cliquez sur <b>Ouvrir PDF</b>.</p>
-        <p class="muted">Tout fonctionne localement dans votre navigateur. Aucun fichier n'est envoyé sur Internet.</p>
+      <div class="start-card">
+        <div class="start-head">
+          <span class="start-logo"></span>
+          <div><h1>LumiPlan</h1><p>Annotation et analyse de plans d'éclairage</p></div>
+        </div>
+        <div class="start-actions">
+          <button id="startOpenPdf" class="primary big"><span data-icon="open"></span>Ouvrir un PDF</button>
+          <button id="startOpenProj" class="big"><span data-icon="project"></span>Ouvrir un projet</button>
+        </div>
+        <div class="start-recent">
+          <h3>Récents</h3>
+          <div id="recentList"><p class="hint">Aucun document récent.</p></div>
+        </div>
+        <p class="start-foot">Glissez un PDF ou un projet dans cette fenêtre · Tout reste sur votre poste, aucun envoi sur Internet</p>
       </div>
     </div>
   </div>
@@ -120,18 +115,24 @@
   <span id="statusTool"></span>
   <span id="statusPos"></span>
   <span class="spacer"></span>
-  <label>Échelle
-    <select id="scaleSelect"></select>
-  </label>
-  <label>Unités
-    <select id="unitSelect">
-      <option value="ft">pi-po</option>
-      <option value="m">m</option>
-      <option value="mm">mm</option>
-    </select>
-  </label>
-  <button id="btnScaleAll" title="Appliquer l'échelle de cette page à toutes les pages">→ toutes les pages</button>
   <span id="statusMsg"></span>
+  <div class="st-group">
+    <label>Échelle <select id="scaleSelect"></select></label>
+    <button id="btnScaleAll" class="st-btn" title="Appliquer l'échelle de cette page à toutes les pages">Toutes les pages</button>
+    <label>Unités <select id="unitSelect"><option value="ft">pi-po</option><option value="m">m</option><option value="mm">mm</option></select></label>
+  </div>
+  <div class="st-group">
+    <button id="btnPrev" class="st-btn icon" title="Page précédente (Pg préc.)"></button>
+    <input id="pageInput" type="text" value="–" title="Page (numéro ou nom de feuille)">
+    <span id="pageCount">/ 0</span>
+    <button id="btnNext" class="st-btn icon" title="Page suivante (Pg suiv.)"></button>
+  </div>
+  <div class="st-group">
+    <button id="btnZoomOut" class="st-btn icon" title="Zoom arrière (-)"></button>
+    <span id="zoomLabel">100 %</span>
+    <button id="btnZoomIn" class="st-btn icon" title="Zoom avant (+)"></button>
+    <button id="btnFit" class="st-btn icon" title="Ajuster à la fenêtre (0)"></button>
+  </div>
 </footer>
 
 <!-- Éditeur de symbole -->
@@ -183,6 +184,8 @@
       <tr><td>I</td><td>Surligneur</td></tr>
       <tr><td>T / Q</td><td>Texte / Bulle</td></tr>
       <tr><td>O</td><td>Note (commentaire)</td></tr>
+      <tr><td>1 … 9</td><td>Symboles favoris (★ dans la bibliothèque)</td></tr>
+      <tr><td>Ctrl+F</td><td>Rechercher dans le PDF</td></tr>
     </table>
     <table>
       <tr><td>S</td><td>Symbole (clic = placer, décompte)</td></tr>
@@ -203,10 +206,12 @@
 <input id="filePdf" type="file" accept="application/pdf,.pdf" hidden>
 <input id="fileProj" type="file" accept=".json,application/json" hidden>
 <input id="fileLib" type="file" accept=".json,application/json" hidden>
+<input id="fileRev" type="file" accept="application/pdf,.pdf" hidden>
 
 <script src="vendor/pdfjs/pdf.min.js"></script>
 <script src="vendor/pdfjs/pdf.worker.src.js"></script>
 <script src="vendor/pdf-lib/pdf-lib.min.js"></script>
+<script src="js/icons.js"></script>
 <script src="js/renderer.js"></script>
 <script src="js/symbols.js"></script>
 <script src="js/measure.js"></script>
@@ -215,5 +220,8 @@
 <script src="js/exporter.js"></script>
 <script src="js/pdfnative.js"></script>
 <script src="js/app.js"></script>
+<script src="js/schedule.js"></script>
+<script src="js/textsearch.js"></script>
+<script src="js/revision.js"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -153,7 +153,25 @@
 
     if (a.type === 'symbol') {
       const sz = LP.symbolSize(a.sym, a, env && env.scaleFor(a.page));
-      LP.drawSymbol(R, a.sym, { x: pts[0][0], y: pts[0][1], w: sz.w, h: sz.h, provisional: sz.provisional && R.kind === 'canvas', rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
+      // Coloration par circuit / zone / type (module Circuits)
+      const ov = env && env.ext && env.ext.symColor ? env.ext.symColor(a) : null;
+      const sym = ov ? Object.assign({}, a.sym, { color: ov }) : a.sym;
+      LP.drawSymbol(R, sym, { x: pts[0][0], y: pts[0][1], w: sz.w, h: sz.h, provisional: sz.provisional && R.kind === 'canvas', rot: a.rot, tag: a.tag, showTag: a.showTag, lineWidth: lw, opacity: s.opacity });
+      if (env && env.ext && env.ext.showCircuit && a.circuit) {
+        // Circuit inscrit sous le luminaire
+        const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 8));
+        const t = String(a.circuit);
+        const w = R.measure(t, fs, false);
+        const r = ((a.rot || 0) * Math.PI) / 180;
+        const ey = Math.abs((sz.w / 2) * Math.sin(r)) + Math.abs((sz.h / 2) * Math.cos(r));
+        R.save();
+        R.text(t, pts[0][0] - w / 2, pts[0][1] + ey + fs * 1.05, fs, ov || '#333333', false);
+        R.restore();
+      }
+      return;
+    }
+    if (a.type === 'schedule') {
+      drawSchedule(R, a, env);
       return;
     }
 
@@ -319,6 +337,10 @@
         return false;
       case 'note':
         return x >= p[0][0] - tol && x <= p[0][0] + NOTE_SIZE + tol && y >= p[0][1] - tol && y <= p[0][1] + NOTE_SIZE + tol;
+      case 'schedule': {
+        const [bx, by, bw, bh] = bbox(a);
+        return x >= bx - tol && x <= bx + bw + tol && y >= by - tol && y <= by + bh + tol;
+      }
       case 'markup':
         for (let i = 0; i + 3 < p.length; i += 4) if (inPoly(x, y, [p[i], p[i + 1], p[i + 3], p[i + 2]])) return true;
         return false;
@@ -346,6 +368,92 @@
     return false;
   }
 
+  /*
+   * Tableau des luminaires placé sur la feuille. Contenu fourni par le module
+   * Tableau (env.ext.scheduleData) : { title, cols:[{label, align}], rows:[[...]], foot }.
+   * Recalculé à chaque dessin : il suit automatiquement les quantités et les données.
+   */
+  let measureCtx = null;
+  function canvasMeasure(t, size, bold) {
+    if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+    measureCtx.font = `${bold ? 'bold ' : ''}${size}px Helvetica, Arial, sans-serif`;
+    return measureCtx.measureText(t).width;
+  }
+  function scheduleLayout(a, env, R) {
+    const data = env && env.ext && env.ext.scheduleData ? env.ext.scheduleData(a) : { title: 'TABLEAU DES LUMINAIRES', cols: [{ label: 'Type' }], rows: [] };
+    const fs = a.fs || 7;
+    const pad = fs * 0.55, rh = fs * 1.75;
+    const meas = (t, b) => (R ? R.measure(String(t), fs, b) : canvasMeasure(String(t), fs, b));
+    const widths = data.cols.map((c, i) => {
+      let w = meas(c.label, true);
+      for (const r of data.rows) w = Math.max(w, meas(r[i] == null ? '' : r[i], false));
+      return Math.min(w + 2 * pad, c.max ? c.max * fs : Infinity);
+    });
+    const tableW = widths.reduce((x, y) => x + y, 0);
+    const titleH = data.title ? fs * 2.3 : 0;
+    const w = Math.max(tableW, data.title ? meas(data.title, true) * 1.3 + 2 * pad : 0);
+    const h = titleH + rh * (data.rows.length + 1) + (data.foot ? rh : 0);
+    return { data, fs, pad, rh, widths, titleH, w, h };
+  }
+  function clip(R, t, maxW, fs, bold) {
+    t = String(t == null ? '' : t);
+    if (R.measure(t, fs, bold) <= maxW + fs * 0.05) return t; // tolérance d'arrondi des mesures
+    while (t.length > 1 && R.measure(t + '…', fs, bold) > maxW) t = t.slice(0, -1);
+    return t + '…';
+  }
+  function drawSchedule(R, a, env) {
+    const L = scheduleLayout(a, env, R);
+    const [x0, y0] = a.pts[0];
+    const { fs, pad, rh, widths, titleH, data } = L;
+    const W = L.w;
+    const ink = a.color || '#1b1f24';
+    R.save();
+    R.setDash([]);
+    // Fond blanc pour la lisibilité sur le plan
+    R.setFill('#ffffff');
+    R.beginPath(); R.rectPath(x0, y0, W, L.h); R.fill();
+    if (data.title) R.text(data.title, x0 + pad, y0 + fs * 1.55, fs * 1.15, ink, true);
+    let y = y0 + titleH;
+    // En-tête
+    R.setFill('#e9ecf1');
+    R.beginPath(); R.rectPath(x0, y, W, rh); R.fill();
+    const colX = [];
+    let cx = x0;
+    for (const w of widths) { colX.push(cx); cx += w; }
+    const extra = W - (cx - x0);
+    if (extra > 0 && widths.length) widths[widths.length - 1] += extra; // dernière colonne élargie au titre
+    const cell = (txt, i, yy, bold) => {
+      const w = widths[i] - 2 * pad;
+      const t = clip(R, txt, w, fs, bold);
+      const tw = R.measure(t, fs, bold);
+      const al = data.cols[i].align;
+      const tx = al === 'right' ? colX[i] + widths[i] - pad - tw : al === 'center' ? colX[i] + (widths[i] - tw) / 2 : colX[i] + pad;
+      R.text(t, tx, yy + rh / 2 + fs * 0.35, fs, ink, bold);
+    };
+    data.cols.forEach((c, i) => cell(c.label, i, y, true));
+    y += rh;
+    data.rows.forEach((r, ri) => {
+      if (ri % 2 === 1) { R.setFill('#f6f7f9'); R.beginPath(); R.rectPath(x0, y, W, rh); R.fill(); }
+      r.forEach((v, i) => cell(v, i, y, false));
+      y += rh;
+    });
+    if (data.foot) {
+      R.setFill('#e9ecf1'); R.beginPath(); R.rectPath(x0, y, W, rh); R.fill();
+      R.text(data.foot, x0 + pad, y + rh / 2 + fs * 0.35, fs, ink, true);
+      y += rh;
+    }
+    // Quadrillage
+    R.setStroke(ink); R.setLineWidth(Math.max(fs * 0.06, 0.3));
+    R.beginPath(); R.rectPath(x0, y0, W, L.h); R.stroke();
+    R.setLineWidth(Math.max(fs * 0.04, 0.2));
+    R.beginPath();
+    for (let k = 0, yy = y0 + titleH; k <= data.rows.length + 1 + (data.foot ? 1 : 0); k++, yy += rh) { R.moveTo(x0, yy); R.lineTo(x0 + W, yy); }
+    const bodyBottom = y0 + titleH + rh * (data.rows.length + 1);
+    for (let i = 1; i < colX.length; i++) { R.moveTo(colX[i], y0 + titleH); R.lineTo(colX[i], bodyBottom); }
+    R.stroke();
+    R.restore();
+  }
+
   // Taille d'un symbole placé, selon l'échelle de sa page (LP.env fourni par l'application)
   function symSize(a) {
     return LP.symbolSize(a.sym, a, LP.env ? LP.env.scaleFor(a.page) : null);
@@ -353,6 +461,7 @@
 
   function bbox(a) {
     if (a.type === 'note') return [a.pts[0][0], a.pts[0][1], NOTE_SIZE, NOTE_SIZE];
+    if (a.type === 'schedule') { const L = scheduleLayout(a, LP.env, null); return [a.pts[0][0], a.pts[0][1], L.w, L.h]; }
     if (a.type === 'symbol') {
       // Emprise du rectangle tourné
       const sz = symSize(a);
@@ -379,7 +488,8 @@
       const sz = symSize(a);
       const ts = LP.tagSize(sz.w, sz.h);
       const tagLen = ((a.tag != null ? a.tag : a.sym.tag) || '').length;
-      return [x - lw - 1, y - ts - lw - 1, w + tagLen * ts * 0.8 + ts + 2 * lw + 2, h + ts * 2 + 2 * lw + 2];
+      const circ = a.circuit ? 12 : 0; // circuit inscrit sous le luminaire
+      return [x - lw - 1 - circ, y - ts - lw - 1, w + tagLen * ts * 0.8 + ts + 2 * lw + 2 + 2 * circ, h + ts * 2 + 2 * lw + 2 + circ];
     }
     if (a.type === 'arrow' || a.type === 'callout') m += Math.max(lw * 4, 6);
     if (a.type === 'cloud' || (a.type === 'polygon' && s.cloud)) m += (s.arc || 14) * 0.6;
@@ -400,6 +510,7 @@
       case 'area': return sc ? LP.fmtArea(LP.polyArea(a.pts) * sc.mpp * sc.mpp, sc.unit) : 'non calibré';
       case 'text': case 'callout': return (a.text || '').slice(0, 60);
       case 'note': return (a.comment || '').slice(0, 60);
+      case 'schedule': return a.scope === 'page' ? 'page courante' : 'tout le projet';
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
     }
     return a.comment || '';

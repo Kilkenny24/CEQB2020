@@ -49,6 +49,7 @@
         if (!handle) {
           handle = await window.showSaveFilePicker({
             suggestedName: name,
+            ...(opts.startIn ? { startIn: opts.startIn } : {}),
             types: opts.types || [{ description: 'Fichier', accept: { [blob.type || 'application/octet-stream']: ['.' + name.split('.').pop()] } }],
           });
         }

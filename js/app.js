@@ -130,7 +130,7 @@
     } catch (e) { return null; }
   }
 
-  async function openPdfBytes(bytes, name) {
+  async function openPdfBytes(bytes, name, opts = {}) {
     await setupPdfWorker();
     toast('Lecture des annotations existantes…', 60000);
     let native;
@@ -168,6 +168,7 @@
     S.undo = []; S.redo = [];
     S.projHandle = null;
     S.dirty = false;
+    lastSaved = null;
     previewCache.clear();
     $('#dropHint').style.display = 'none';
     document.title = `${name} — LumiPlan`;
@@ -180,15 +181,23 @@
     if (pendingProject) {
       const p = pendingProject; pendingProject = null;
       applyProject(p, true);
+    } else if (opts.transfer) {
+      opts.transfer(S);
     } else {
       const auto = await LP.store.get('auto:' + S.fingerprint);
-      if (auto && auto.annots && auto.annots.length && LP.annotsDiffer(auto.annots, S.annots)) {
+      if (await loadLinkedProject(auto)) { /* projet du fichier chargé */ }
+      else if (auto && auto.annots && auto.annots.length && LP.annotsDiffer(auto.annots, S.annots)) {
         if (confirm(`${auto.annots.length} annotation(s) enregistrée(s) automatiquement pour ce PDF le ${new Date(auto.saved).toLocaleString('fr-CA')}.\n\nLes restaurer ?`)) {
           applyProject(auto, true);
         }
       }
     }
     refreshPanels();
+    rememberRecent();
+    renderRecents();
+    updateDocTitle();
+    updateSaveState();
+    hooks.open.forEach((f) => f());
     return true;
   }
 
@@ -228,6 +237,8 @@
     goPage.lastSize = [S.vp.width, S.vp.height];
     goPage.visited = true;
     $('#pageInput').value = S.pageLabels ? S.pageLabels[n - 1] || n : n;
+    updateDocTitle();
+    hooks.page.forEach((f) => f(n));
     $('#pageCount').textContent = `/ ${S.numPages}`;
     updateScaleUI();
     drawBase();
@@ -422,6 +433,7 @@
         }
       }
     }
+    hooks.overlay.forEach((f) => f(octx, R));
     // Réseau : zone tracée et copies fantômes
     if (AR) {
       octx.save();
@@ -472,6 +484,8 @@
   let autoTimer = null;
   function changed() {
     S.dirty = true;
+    updateSaveState();
+    scheduleFileSave();
     drawOverlay();
     refreshPanelsSoon();
     clearTimeout(autoTimer);
@@ -967,7 +981,8 @@
     const inField = tag === 'input' || tag === 'textarea' || tag === 'select';
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(e.shiftKey); return; }
-    if (ctrl && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#filePdf').click(); return; }
+    if (ctrl && e.key.toLowerCase() === 'o') { e.preventDefault(); pickPdf(); return; }
+    for (const f of hooks.key) if (f(e, inField)) return;
     if (inField) return;
     if (ctrl) {
       const k = e.key.toLowerCase();
@@ -1012,6 +1027,12 @@
       const syms = S.annots.filter((a) => S.sel.has(a.id) && a.type === 'symbol');
       if (syms.length) { pushUndo(); syms.forEach((a) => (a.rot = ((a.rot || 0) + d + 360) % 360)); touch(); changed(); refreshProps(); }
       else if (S.tool === 'symbol') { symDefaults.rot = (symDefaults.rot + d + 360) % 360; drawOverlay(); refreshProps(); }
+      return;
+    }
+    if (/^[1-9]$/.test(e.key)) {
+      const fav = S.library.find((x) => String(x.hot) === e.key);
+      if (fav) { S.currentSym = fav; setTool('symbol'); toast(`Symbole favori ${e.key} : ${fav.name}`); }
+      else toast(`Aucun symbole sur la touche ${e.key} — utilisez ★ dans la bibliothèque`);
       return;
     }
     const t = TOOLS.find((x) => x !== 'sep' && x.key === e.key.toLowerCase());
@@ -1280,37 +1301,306 @@
   }
 
   /* ======================= Outils ======================= */
-  function buildToolbar() {
-    const nav = $('#tools');
+  /* ======================= Ruban ======================= */
+  const RIBBON = [
+    { title: 'Fichier', items: [
+      { big: 'btnOpenPdf', icon: 'open', label: 'Ouvrir', title: 'Ouvrir un PDF (Ctrl+O)' },
+      { split: 'btnSaveProj', icon: 'save', label: 'Enregistrer', title: 'Enregistrer le projet (Ctrl+S)', menu: [
+        { id: 'btnSaveProjAs', icon: 'save', label: 'Enregistrer sous…', sub: 'Choisir un autre fichier projet (Ctrl+Maj+S)' },
+        { id: 'btnSaveBundle', icon: 'project', label: 'Projet + PDF', sub: 'Un seul fichier, pour archiver ou transmettre' },
+        'sep',
+        { id: 'btnOpenProj', icon: 'open', label: 'Ouvrir un projet…', sub: 'Fichier .lumiplan.json' },
+      ] },
+      { split: 'btnExportPdf', icon: 'export', label: 'Exporter', title: 'Exporter le PDF annoté (annotations modifiables)', menu: [
+        { id: 'mExportNative', icon: 'export', label: 'PDF annoté', sub: 'Annotations modifiables dans Bluebeam / Acrobat' },
+        { id: 'btnExportFlat', icon: 'flat', label: 'PDF aplati', sub: 'Annotations intégrées au dessin (émission finale)' },
+        'sep',
+        { id: 'btnExportCsv', icon: 'csv', label: 'Décompte CSV', sub: 'Quantités, tableau et liste pour Excel' },
+      ] },
+    ] },
+    { title: 'Édition', items: [
+      { col: [
+        { id: 'btnUndo', icon: 'undo', label: 'Annuler', title: 'Annuler (Ctrl+Z)' },
+        { id: 'btnRedo', icon: 'redo', label: 'Rétablir', title: 'Rétablir (Ctrl+Y)' },
+        { action: 'dup', icon: 'dup', label: 'Dupliquer', title: 'Dupliquer la sélection (Ctrl+D)' },
+      ] },
+    ] },
+    { title: 'Sélection', items: [{ tool: 'select', big: true }, { tool: 'pan', big: true }] },
+    { title: 'Annotation', items: [{ grid: ['line', 'arrow', 'rect', 'ellipse', 'cloud', 'polyline', 'polygon', 'ink', 'highlight', 'text', 'callout', 'note'] }] },
+    { title: 'Mesure', items: [
+      { tool: 'calibrate', big: true },
+      { col: [{ tool: 'length' }, { tool: 'polylength' }, { tool: 'area' }] },
+      { col: [{ id: 'btnAutoScale', icon: 'autoscale', label: 'Échelle auto', title: "Lire l'échelle inscrite sur les feuilles (cartouche)" }] },
+    ] },
+    { title: 'Éclairage', items: [
+      { tool: 'symbol', big: true },
+      { col: [
+        { action: 'grid', icon: 'grid', label: 'Réseau grille', title: 'Réseau grille (array grid) : colonnes × rangées à espacement donné' },
+        { action: 'zone', icon: 'zone', label: 'Réseau espacement', title: 'Réseau par espacement (array spacing) : remplir une pièce ou une ligne' },
+        { id: 'btnPlaceSchedule', icon: 'schedule', label: 'Placer le tableau', title: 'Placer le tableau des luminaires sur la feuille' },
+      ] },
+      { col: [
+        { select: 'colorBy', icon: 'palette', label: 'Couleurs', options: [['', 'Normales'], ['circuit', 'Par circuit'], ['zone', 'Par zone de contrôle'], ['tag', 'Par type']] },
+        { id: 'btnShowCircuit', icon: 'circuit', label: 'Étiq. circuits', title: 'Afficher le circuit sous chaque luminaire (visible aussi dans le PDF exporté)' },
+      ] },
+    ] },
+    { title: 'Révision', items: [
+      { big: 'btnRevision', icon: 'revision', label: 'Nouvelle révision', title: 'Reporter les annotations sur une nouvelle révision du PDF et repérer les modifications' },
+      { col: [
+        { id: 'btnDiffToggle', icon: 'diff', label: 'Modifications', title: 'Afficher / masquer les zones modifiées' },
+        { id: 'btnDiffPrev', icon: 'prev', label: 'Précédente', title: 'Zone modifiée précédente' },
+        { id: 'btnDiffNext', icon: 'next', label: 'Suivante', title: 'Zone modifiée suivante' },
+      ] },
+    ] },
+  ];
+
+  function buildRibbon() {
+    const nav = $('#ribbon');
     nav.innerHTML = '';
-    for (const t of TOOLS) {
-      if (t === 'sep') { const s = document.createElement('span'); s.className = 'sep'; nav.appendChild(s); continue; }
+    const toolDef = (id) => TOOLS.find((t) => t !== 'sep' && t.id === id);
+    const mk = (cls, it) => {
       const b = document.createElement('button');
-      b.dataset.tool = t.id;
-      b.title = `${t.label} (${t.key.toUpperCase()})`;
-      b.innerHTML = `<svg viewBox="0 0 24 24">${t.icon}</svg><span class="lbl">${t.label}</span>`;
-      b.addEventListener('click', () => setTool(t.id));
-      nav.appendChild(b);
+      b.className = `rb ${cls}`;
+      if (it.tool) {
+        const t = toolDef(it.tool);
+        b.dataset.tool = t.id;
+        b.title = `${t.label} (${t.key.toUpperCase()})`;
+        b.innerHTML = `${LP.icon(t.id)}<span>${t.label}</span>`;
+        b.addEventListener('click', () => setTool(t.id));
+      } else {
+        if (it.id) b.id = it.id;
+        if (it.action) { b.dataset.action = it.action; b.addEventListener('click', () => runAction(it.action)); }
+        b.title = it.title || it.label;
+        b.innerHTML = `${LP.icon(it.icon)}<span>${it.label}</span>`;
+      }
+      return b;
+    };
+    for (const g of RIBBON) {
+      const grp = document.createElement('div');
+      grp.className = 'rg';
+      const body = document.createElement('div');
+      body.className = 'rg-body';
+      for (const it of g.items) {
+        if (it.big && typeof it.big === 'string') body.appendChild(mk('rb-big', { id: it.big, icon: it.icon, label: it.label, title: it.title }));
+        else if (it.big) body.appendChild(mk('rb-big', it));
+        else if (it.split) {
+          const w = document.createElement('div');
+          w.className = 'rb-split';
+          w.appendChild(mk('rb-big', { id: it.split, icon: it.icon, label: it.label, title: it.title }));
+          const c = document.createElement('button');
+          c.className = 'rb rb-caret';
+          c.title = 'Plus d\'options';
+          c.innerHTML = LP.icon('chevron');
+          c.addEventListener('click', (e) => { e.stopPropagation(); openMenu(c, it.menu); });
+          w.appendChild(c);
+          body.appendChild(w);
+          // Les entrées de menu existent dès le départ (liaisons dans bind())
+          for (const m of it.menu) if (m !== 'sep') menuButtons[m.id] = m;
+        } else if (it.col) {
+          const col = document.createElement('div');
+          col.className = 'rb-col';
+          for (const c of it.col) {
+            if (c.select) {
+              const l = document.createElement('label');
+              l.className = 'rb-select';
+              l.innerHTML = `${LP.icon(c.icon)}<select id="${c.select}" title="${esc(c.label)}">${c.options.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+              col.appendChild(l);
+            } else col.appendChild(mk('rb-small', c));
+          }
+          body.appendChild(col);
+        } else if (it.grid) {
+          const gr = document.createElement('div');
+          gr.className = 'rb-grid';
+          for (const id of it.grid) gr.appendChild(mk('rb-small', { tool: id }));
+          body.appendChild(gr);
+        }
+      }
+      grp.appendChild(body);
+      const t = document.createElement('div');
+      t.className = 'rg-title';
+      t.textContent = g.title;
+      grp.appendChild(t);
+      nav.appendChild(grp);
     }
-    // Actions toujours visibles : duplication et réseaux
-    const sep = document.createElement('span'); sep.className = 'sep'; nav.appendChild(sep);
-    const ACTIONS = [
-      { id: 'dup', label: 'Dupliquer', title: 'Dupliquer la sélection (Ctrl+D)', icon: '<rect x="8" y="8" width="12" height="12" rx="1"/><path d="M4 16V5a1 1 0 011-1h11"/>' },
-      { id: 'grid', label: 'Réseau grille', title: 'Réseau grille (array grid) : colonnes × rangées à espacement donné', icon: '<rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5"/><rect x="17" y="3" width="4" height="5"/><rect x="3" y="10" width="5" height="5"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5"/><rect x="3" y="17" width="5" height="4"/><rect x="10" y="17" width="5" height="4"/>' },
-      { id: 'zone', label: 'Réseau esp.', title: 'Réseau par espacement (array spacing) : remplir une pièce ou une ligne', icon: '<rect x="3" y="3" width="18" height="18" stroke-dasharray="3 2"/><circle cx="8" cy="8" r="1.6"/><circle cx="16" cy="8" r="1.6"/><circle cx="8" cy="16" r="1.6"/><circle cx="16" cy="16" r="1.6"/>' },
-    ];
-    for (const a of ACTIONS) {
+    // Boutons de menu : créés hors écran pour que leurs liaisons existent avant la première ouverture
+    const store = document.createElement('div');
+    store.id = 'menuStore';
+    store.hidden = true;
+    for (const [id, m] of Object.entries(menuButtons)) {
       const b = document.createElement('button');
-      b.dataset.action = a.id;
-      b.title = a.title;
-      b.innerHTML = `<svg viewBox="0 0 24 24">${a.icon}</svg><span class="lbl">${a.label}</span>`;
-      b.addEventListener('click', () => runAction(a.id));
-      nav.appendChild(b);
+      b.id = id;
+      b.innerHTML = `${LP.icon(m.icon)}<span>${m.label}${m.sub ? `<small>${m.sub}</small>` : ''}</span>`;
+      store.appendChild(b);
+    }
+    document.body.appendChild(store);
+    // Icônes déclaratives (data-icon) et boutons à icône seule
+    $$('[data-icon]').forEach((e) => { e.innerHTML = LP.icon(e.dataset.icon); });
+    const setIc = (sel, name) => { const e = $(sel); if (e) e.innerHTML = LP.icon(name); };
+    setIc('.tb-brand .logo', 'logo'); setIc('.start-logo', 'logo'); setIc('.tb-search .sicon', 'search');
+    setIc('#lnkAtelier', 'atelier'); setIc('#btnHelp', 'help');
+    setIc('#btnPrev', 'prev'); setIc('#btnNext', 'next'); setIc('#btnZoomOut', 'zoomout'); setIc('#btnZoomIn', 'zoomin'); setIc('#btnFit', 'fit');
+  }
+  const menuButtons = {};
+  // Petit menu contextuel : items = [{ icon, label, fn, danger } | 'sep']
+  function popupMenu(anchor, items) {
+    closeMenu();
+    const old = document.getElementById('popMenu'); if (old) old.remove();
+    const m = document.createElement('div');
+    m.className = 'menu';
+    m.id = 'popMenu';
+    for (const it of items) {
+      if (it === 'sep') { const d = document.createElement('div'); d.className = 'sep'; m.appendChild(d); continue; }
+      const b = document.createElement('button');
+      if (it.danger) b.className = 'danger';
+      b.innerHTML = `${LP.icon(it.icon)}<span>${it.label}</span>`;
+      b.onclick = () => { m.remove(); it.fn(); };
+      m.appendChild(b);
+    }
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, window.innerWidth - m.offsetWidth - 8)) + 'px';
+    m.style.top = Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 8) + 'px';
+    setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+  }
+  // Menu déroulant : déplace temporairement les vrais boutons dans la fenêtre du menu
+  function openMenu(anchor, items) {
+    closeMenu();
+    const m = document.createElement('div');
+    m.className = 'menu';
+    m.id = 'openMenu';
+    for (const it of items) {
+      if (it === 'sep') { const d = document.createElement('div'); d.className = 'sep'; m.appendChild(d); continue; }
+      m.appendChild(document.getElementById(it.id));
+    }
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.left = Math.min(r.left, window.innerWidth - m.offsetWidth - 8) + 'px';
+    m.style.top = r.bottom + 4 + 'px';
+    setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
+  }
+  function closeMenu() {
+    const m = document.getElementById('openMenu');
+    if (!m) return;
+    const store = document.getElementById('menuStore');
+    m.querySelectorAll('button').forEach((b) => store.appendChild(b));
+    m.remove();
+  }
+
+  /* ======================= Thème ======================= */
+  async function applyTheme(t) {
+    document.body.dataset.theme = t === 'dark' ? 'dark' : 'light';
+    $('#btnTheme').innerHTML = LP.icon(t === 'dark' ? 'sun' : 'moon');
+    $('#btnTheme').title = t === 'dark' ? 'Thème clair' : 'Thème sombre';
+    drawBase();
+  }
+
+  /* ======================= Barre de titre : document et enregistrement ======================= */
+  function updateDocTitle() {
+    if (!S.pdf) { $('#docTitle').textContent = 'Aucun document'; $('#docPage').textContent = ''; document.title = 'LumiPlan'; return; }
+    $('#docTitle').textContent = S.fileName;
+    const lbl = S.pageLabels && S.pageLabels[S.pageNum - 1];
+    $('#docPage').textContent = `${lbl && lbl !== String(S.pageNum) ? 'Feuille ' + lbl + ' · ' : ''}page ${S.pageNum} de ${S.numPages}`;
+    document.title = `${S.fileName} — LumiPlan`;
+  }
+  let lastSaved = null;
+  function updateSaveState(err) {
+    const el = $('#saveState');
+    el.className = 'save-state';
+    if (!S.pdf) { el.textContent = ''; return; }
+    const hh = (d) => d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+    if (err) { el.classList.add('err'); el.textContent = 'Échec de l\'enregistrement'; el.title = String(err); return; }
+    if (S.projHandle) {
+      if (S.dirty) { el.classList.add('dirty'); el.textContent = 'Enregistrement…'; }
+      else { el.classList.add('ok'); el.textContent = lastSaved ? `Enregistré à ${hh(lastSaved)}` : 'Enregistré'; }
+      el.title = `Projet : ${S.projHandle.name} — enregistré automatiquement à chaque modification`;
+    } else {
+      el.classList.add(S.dirty ? 'dirty' : 'ok');
+      el.textContent = S.dirty ? 'Non enregistré' : 'Aucune modification';
+      el.title = "Copie automatique dans le navigateur seulement. Ctrl+S pour créer le fichier projet à côté du PDF : il sera ensuite enregistré automatiquement.";
     }
   }
+  // Après un premier enregistrement, le fichier projet est réécrit automatiquement
+  let fileSaveTimer = null;
+  function scheduleFileSave() {
+    if (!S.projHandle) return;
+    clearTimeout(fileSaveTimer);
+    fileSaveTimer = setTimeout(writeProjectFile, 2500);
+  }
+  async function writeProjectFile() {
+    if (!S.projHandle || !S.pdf) return;
+    try {
+      const w = await S.projHandle.createWritable();
+      await w.write(new Blob([JSON.stringify(buildProject(false))], { type: 'application/json' }));
+      await w.close();
+      S.dirty = false;
+      lastSaved = new Date();
+      updateSaveState();
+    } catch (e) {
+      console.warn('Sauvegarde automatique du fichier impossible', e);
+      updateSaveState(e.message || e);
+    }
+  }
+
+  /* ======================= Documents récents ======================= */
+  async function getRecents() { return (await LP.store.get('recents')) || []; }
+  async function rememberRecent(extra) {
+    if (!S.fingerprint) return;
+    let list = await getRecents();
+    const old = list.find((r) => r.fp === S.fingerprint) || {};
+    list = list.filter((r) => r.fp !== S.fingerprint);
+    list.unshift(Object.assign({}, old, { fp: S.fingerprint, name: S.fileName, pages: S.numPages, date: Date.now() }, S.pdfHandle ? { handle: S.pdfHandle } : {}, extra || {}));
+    try { await LP.store.set('recents', list.slice(0, 10)); } catch (e) { /* poignées non sérialisables : ignoré */ }
+  }
+  async function renderRecents() {
+    const box = $('#recentList');
+    const list = await getRecents();
+    if (!list.length) { box.innerHTML = '<p class="hint">Aucun document récent.</p>'; return; }
+    box.innerHTML = '';
+    for (const r of list) {
+      const d = document.createElement('div');
+      d.className = 'rc';
+      d.innerHTML = `${LP.icon('pages')}<div><div>${esc(r.name)}</div><small>${r.pages || '?'} page(s) · ${new Date(r.date).toLocaleDateString('fr-CA')}${r.proj ? ' · projet : ' + esc(r.proj.name) : ''}</small></div><button class="rm" title="Retirer de la liste">${LP.icon('close')}</button>`;
+      d.onclick = async (e) => {
+        if (e.target.closest('.rm')) {
+          await LP.store.set('recents', (await getRecents()).filter((x) => x.fp !== r.fp));
+          return renderRecents();
+        }
+        if (!r.handle) { toast('Ce document doit être rouvert avec « Ouvrir un PDF »', 5000); return $('#filePdf').click(); }
+        try {
+          if ((await r.handle.queryPermission({ mode: 'read' })) !== 'granted' && (await r.handle.requestPermission({ mode: 'read' })) !== 'granted') return;
+          const f = await r.handle.getFile();
+          S.pdfHandle = r.handle;
+          await openPdfBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+        } catch (err) { toast('Fichier introuvable (déplacé ou renommé ?)', 5000); }
+      };
+      box.appendChild(d);
+    }
+  }
+  // Ouvre le projet associé au PDF (fichier à côté), s'il est plus récent que la copie du navigateur
+  async function loadLinkedProject(autoSaved) {
+    const rec = (await getRecents()).find((r) => r.fp === S.fingerprint);
+    if (!rec || !rec.proj) return false;
+    try {
+      let perm = await rec.proj.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') perm = await rec.proj.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') return false;
+      const f = await rec.proj.getFile();
+      if (autoSaved && autoSaved.saved > f.lastModified + 2000 &&
+        !confirm(`Le projet « ${f.name} » est plus ancien que la copie automatique du navigateur.\nOK = charger le fichier projet · Annuler = garder la copie plus récente`)) return false;
+      const p = JSON.parse(await f.text());
+      applyProject(p, true);
+      S.projHandle = rec.proj;
+      lastSaved = new Date(f.lastModified);
+      S.dirty = false;
+      updateSaveState();
+      toast(`Projet « ${f.name} » chargé`, 4000);
+      return true;
+    } catch (e) { console.warn('Projet associé illisible', e); return false; }
+  }
+
   // Sans sélection : on demande de cliquer sur le modèle, puis l'action démarre
   let pendingAction = null;
-  function markAction(id) { document.querySelectorAll('#tools [data-action]').forEach((b) => b.classList.toggle('active', b.dataset.action === id)); }
+  function markAction(id) { document.querySelectorAll('#ribbon [data-action]').forEach((b) => b.classList.toggle('active', b.dataset.action === id)); }
   function runAction(id) {
     if (!S.pdf) { toast("Ouvrez d'abord un PDF"); return; }
     const hasSel = S.annots.some((a) => S.sel.has(a.id) && a.page === S.pageNum);
@@ -1335,7 +1625,7 @@
     drawing = null;
     S.tool = id;
     if (id !== 'select') { S.sel.clear(); }
-    $$('#tools button').forEach((b) => b.classList.toggle('active', b.dataset.tool === id));
+    $$('#ribbon [data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === id));
     const t = TOOLS.find((x) => x.id === id);
     const hints = {
       select: 'Cliquer pour sélectionner, glisser pour déplacer, Alt+glisser pour dupliquer',
@@ -1384,6 +1674,12 @@
       return;
     }
     $('#propTitle').textContent = title;
+    if (!isDefaults) {
+      for (const f of hooks.props) {
+        const r = f(target);
+        if (r) { box.innerHTML = r.html; r.bind(box); return; }
+      }
+    }
     const first = isDefaults ? null : target[0];
     const type = isDefaults ? S.tool : first.type;
     const st = isDefaults ? (defaults[type] || {}) : first.style;
@@ -1408,7 +1704,15 @@
       const rotVal = isDefaults ? symDefaults.rot : first.rot || 0;
       const show = isDefaults ? symDefaults.showTag : first.showTag !== false;
       h += `<p class="hint">${sym ? esc(sym.name) : 'Aucun symbole choisi'}</p>`;
-      if (!isDefaults) h += `<label>Étiquette <input type="text" data-k="tag" value="${esc(tagVal || '')}"></label>`;
+      if (!isDefaults) {
+        h += `<label>Étiquette <input type="text" data-k="tag" value="${esc(tagVal || '')}"></label>`;
+        const same = (k) => { const v = target[0][k] || ''; return target.every((x) => (x[k] || '') === v) ? v : ''; };
+        const vals = (k) => [...new Set(S.annots.map((x) => x[k]).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'fr', { numeric: true }));
+        h += `<label>Circuit <input type="text" data-k="circuit" list="dlCircuits" placeholder="${target.length > 1 && !same('circuit') ? '(plusieurs)' : 'ex. P1-12'}" value="${esc(same('circuit'))}"></label>
+          <datalist id="dlCircuits">${vals('circuit').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
+          <label>Zone contrôle <input type="text" data-k="zone" list="dlZones" placeholder="${target.length > 1 && !same('zone') ? '(plusieurs)' : 'ex. Z1, Classe 104'}" value="${esc(same('zone'))}"></label>
+          <datalist id="dlZones">${vals('zone').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
+      }
       const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
       h += `<label>Dimension <select data-k="mode">
               <option value="real" ${!paper ? 'selected' : ''}>À l'échelle réelle</option>
@@ -1788,7 +2092,8 @@
         nm.innerHTML = `${esc(s.name)}${s.tag ? ` <small>[${esc(s.tag)}]</small>` : ''}<br><small>${esc(dimTxt)}${dd.mode !== 'real' ? ' papier' : ''}</small>`;
         it.appendChild(nm);
         const acts = document.createElement('div'); acts.className = 'acts';
-        acts.innerHTML = '<button data-a="up" title="Monter">▲</button><button data-a="down" title="Descendre">▼</button><button data-a="edit" title="Modifier">✎</button><button data-a="dup" title="Dupliquer (nouveau type)">⧉</button><button data-a="del" title="Supprimer">✕</button>';
+        acts.innerHTML = `<button data-a="hot" title="Touche de raccourci (1 à 9)">${LP.icon('star')}</button><button data-a="edit" title="Modifier">${LP.icon('edit')}</button><button data-a="more" title="Plus d'actions">⋯</button>`;
+        if (s.hot) { const hb = document.createElement('span'); hb.className = 'hot'; hb.textContent = s.hot; hb.title = `Touche ${s.hot}`; it.appendChild(hb); }
         it.appendChild(acts);
         it.addEventListener('dragstart', (e) => { dragSym = { type: 'sym', id: s.id }; it.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s.id); });
         it.addEventListener('dragend', () => { it.classList.remove('dragging'); dragSym = null; clearDropMarks(); });
@@ -1807,9 +2112,17 @@
           else moveCat(dragSym.cat, catOf(s), after);
           dragSym = null; clearDropMarks(); libChanged();
         });
-        it.addEventListener('click', (e) => {
-          const a = e.target.dataset && e.target.dataset.a;
+        const run = (a) => {
           if (a === 'up' || a === 'down') { stepSym(s.id, a === 'up' ? -1 : 1); return libChanged(); }
+          if (a === 'hot') {
+            const v = prompt(`Touche de raccourci pour « ${s.name} » (1 à 9, vide pour retirer) :`, s.hot || '');
+            if (v == null) return;
+            const k = v.trim();
+            if (k && !/^[1-9]$/.test(k)) { alert('Choisissez un chiffre de 1 à 9.'); return; }
+            S.library.forEach((x) => { if (k && String(x.hot) === k) delete x.hot; });
+            if (k) s.hot = +k; else delete s.hot;
+            return libChanged();
+          }
           if (a === 'edit') return openSymbolDialog(s);
           if (a === 'dup') {
             const c = Object.assign({}, s, { id: 'u-' + LP.uid(), name: s.name + ' (copie)', builtin: false });
@@ -1827,6 +2140,22 @@
           }
           S.currentSym = s;
           setTool('symbol');
+        };
+        it.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-a]');
+          const a = btn && btn.dataset.a;
+          if (a === 'more') {
+            e.stopPropagation();
+            popupMenu(btn, [
+              { icon: 'prev', label: 'Monter', fn: () => run('up') },
+              { icon: 'next', label: 'Descendre', fn: () => run('down') },
+              { icon: 'dup', label: 'Dupliquer (nouveau type)', fn: () => run('dup') },
+              'sep',
+              { icon: 'trash', label: 'Supprimer', fn: () => run('del'), danger: true },
+            ]);
+            return;
+          }
+          run(a);
         });
         list.appendChild(it);
       }
@@ -1991,6 +2320,7 @@
     renderCounts();
     renderAnnotList();
     renderPageList();
+    hooks.panels.forEach((f) => f());
   }
 
   function symDims(a) {
@@ -2145,12 +2475,15 @@
       annots: S.annots, images: usedImg,
       deletedSrc: deletedSrc(),
       library: S.library,
+      ext: {},
     };
+    hooks.save.forEach((f) => f(p.ext));
     if (withPdf && S.pdfBytes) p.pdfData = LP.bytesToBase64(S.pdfBytes);
     return p;
   }
 
   function applyProject(p, silent) {
+    hooks.load.forEach((f) => f(p.ext || {}));
     const incoming = (p.annots || []).filter((a) => a && a.pts && a.type);
     // Sécurité : une annotation d'origine du PDF absente du projet (projet plus
     // ancien que l'import) est conservée, pour ne jamais effacer le commentaire
@@ -2175,7 +2508,17 @@
     drawOverlay(); refreshPanels(); refreshProps();
   }
 
-  async function openProjectFile(file) {
+  async function pickProject() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [h] = await window.showOpenFilePicker({ types: [{ description: 'Projet LumiPlan', accept: { 'application/json': ['.json'] } }], id: 'lumiplan-proj', ...(S.pdfHandle ? { startIn: S.pdfHandle } : {}) });
+        return openProjectFile(await h.getFile(), h);
+      } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    $('#fileProj').click();
+  }
+
+  async function openProjectFile(file, handle) {
     let p;
     try { p = JSON.parse(await LP.readFile(file, 'text')); } catch (e) { alert('Fichier projet invalide.'); return; }
     if (p.format !== 'lumiplan-project') { alert("Ce fichier n'est pas un projet LumiPlan."); return; }
@@ -2195,6 +2538,14 @@
       !confirm(`Ce projet a été créé pour « ${p.pdf.name} », qui semble différent du PDF ouvert.\nCharger quand même ?`)) return;
     if (S.annots.length && !confirm('Remplacer les annotations actuelles par celles du projet ?')) return;
     applyProject(p);
+    if (handle && !p.pdfData) {
+      // Le projet ouvert devient le fichier d'enregistrement automatique
+      S.projHandle = handle;
+      lastSaved = new Date(file.lastModified || Date.now());
+      S.dirty = false;
+      rememberRecent({ proj: handle });
+      updateSaveState();
+    }
     toast('Projet chargé');
   }
 
@@ -2217,11 +2568,18 @@
     const name = baseName() + (withPdf ? '.lumiplan-complet.json' : '.lumiplan.json');
     const handle = await LP.saveBlob(blob, name, {
       handle: saveAs || withPdf ? null : S.projHandle,
+      startIn: S.pdfHandle || undefined,
       types: [{ description: 'Projet LumiPlan', accept: { 'application/json': ['.json'] } }],
     });
-    if (handle && !withPdf) S.projHandle = handle;
+    if (handle === null && window.showSaveFilePicker) return; // annulé
+    if (handle && !withPdf) {
+      S.projHandle = handle;
+      rememberRecent({ proj: handle });
+    }
     S.dirty = false;
-    toast('Projet enregistré');
+    lastSaved = new Date();
+    updateSaveState();
+    toast(handle && !withPdf ? `Projet enregistré : ${handle.name} — enregistrement automatique activé` : 'Projet enregistré', 5000);
   }
 
   async function exportPdfFile(flatten) {
@@ -2261,12 +2619,13 @@
     rows.push(['QUANTITÉS MESURÉES']);
     rows.push(['Mesure', 'Total']);
     for (const e of computeQty()) rows.push([e.label, fmtQty(e, e.total)]);
+    hooks.csv.forEach((f) => f(rows));
     rows.push([]);
     rows.push(['LISTE DES ANNOTATIONS']);
-    rows.push(['Page', 'Type', 'Description', 'Étiquette', 'Commentaire', 'Valeur (m ou m²)', 'Auteur', 'Créé', 'Modifié', 'Réponses']);
+    rows.push(['Page', 'Type', 'Description', 'Étiquette', 'Circuit', 'Zone de contrôle', 'Commentaire', 'Valeur (m ou m²)', 'Auteur', 'Créé', 'Modifié', 'Réponses']);
     for (const a of [...S.annots].sort((x, y) => x.page - y.page)) {
       const q = LP.quantityAnnotation(a, env);
-      rows.push([a.page, LP.TYPE_LABELS[a.type], LP.describeAnnotation(a, env), a.tag || '', a.comment || '',
+      rows.push([a.page, LP.TYPE_LABELS[a.type], LP.describeAnnotation(a, env), a.tag || '', a.circuit || '', a.zone || '', a.comment || '',
         q == null ? '' : q.toFixed(3).replace('.', ','), a.author || '', a.created, a.modified,
         (a.replies || []).map((r) => `${r.author || '?'} : ${r.text}`).join(' | ')]);
     }
@@ -2279,15 +2638,34 @@
   /* ======================= Liaisons UI ======================= */
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 
-  async function openPdfFile(file) {
-    if (S.dirty && S.annots.length && !confirm('Des modifications non enregistrées seront perdues (une copie automatique existe). Continuer ?')) return;
+  // Ouvre un PDF avec le sélecteur de fichiers du système (garde la poignée : récents, projet à côté du PDF)
+  async function pickPdf() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }], id: 'lumiplan-pdf' });
+        const f = await h.getFile();
+        S.pdfHandle = h;
+        return openPdfFile(f, true);
+      } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    $('#filePdf').click();
+  }
+
+  async function openPdfFile(file, keepHandle) {
+    if (!keepHandle) S.pdfHandle = null;
+    if (S.dirty && S.annots.length && !S.projHandle && !confirm('Des modifications non enregistrées seront perdues (une copie automatique existe). Continuer ?')) return;
+    if (S.projHandle && S.dirty) await writeProjectFile();
     const buf = new Uint8Array(await LP.readFile(file));
     await openPdfBytes(buf, file.name);
   }
 
   function bind() {
-    $('#btnOpenPdf').onclick = () => $('#filePdf').click();
-    $('#btnOpenProj').onclick = () => $('#fileProj').click();
+    $('#btnOpenPdf').onclick = pickPdf;
+    $('#startOpenPdf').onclick = pickPdf;
+    $('#btnOpenProj').onclick = () => { closeMenu(); pickProject(); };
+    $('#startOpenProj').onclick = pickProject;
+    $('#mExportNative').onclick = () => exportPdfFile(false);
+    $('#btnTheme').onclick = async () => { const t = document.body.dataset.theme === 'dark' ? 'light' : 'dark'; await applyTheme(t); LP.store.set('theme', t); };
     $('#btnSaveProj').onclick = () => saveProject(false);
     $('#btnSaveProjAs').onclick = () => saveProject(true);
     $('#btnSaveBundle').onclick = () => saveProject(true, true);
@@ -2352,12 +2730,15 @@
     // Glisser-déposer
     viewer.addEventListener('dragover', (e) => { e.preventDefault(); viewer.classList.add('dragover'); });
     viewer.addEventListener('dragleave', () => viewer.classList.remove('dragover'));
-    viewer.addEventListener('drop', (e) => {
+    viewer.addEventListener('drop', async (e) => {
       e.preventDefault(); viewer.classList.remove('dragover');
       const f = e.dataTransfer.files[0];
       if (!f) return;
-      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') openPdfFile(f);
-      else if (/\.json$/i.test(f.name)) openProjectFile(f);
+      // Chrome / Edge : la poignée de fichier permet ensuite la liste « Récents »
+      const item = e.dataTransfer.items && e.dataTransfer.items[0];
+      const h = item && item.getAsFileSystemHandle ? await item.getAsFileSystemHandle().catch(() => null) : null;
+      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') { S.pdfHandle = h; openPdfFile(f, true); }
+      else if (/\.json$/i.test(f.name)) openProjectFile(f, h);
     });
     window.addEventListener('beforeunload', (e) => { if (S.dirty) { autosave(); e.preventDefault(); e.returnValue = ''; } });
     new ResizeObserver(resize).observe(viewer);
@@ -2383,15 +2764,35 @@
   }
 
   async function init() {
-    buildToolbar();
+    buildRibbon();
     bind();
     listenAtelier();
+    await applyTheme((await LP.store.get('theme')) || 'light');
     await loadLibrary();
+    renderRecents();
+    updateSaveState();
     renderSymbolList();
     setTool('select');
     resize();
     updateScaleUI();
   }
+
+  /* ======================= Interface interne pour les modules ======================= */
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [] };
+  LP.app = {
+    S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
+    goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
+    toScreen: (x, y) => toScreen(x, y), toPage: (x, y) => toPage(x, y),
+    view: () => ({ w: vw, h: vh, zoom: S.zoom }),
+    centerOn(x, y, zoom) {
+      if (zoom) S.zoom = zoom;
+      S.pan.x = vw / 2 - x * S.zoom; S.pan.y = vh / 2 - y * S.zoom;
+      updateZoomLabel(); viewChanged();
+    },
+    addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
+    newAnnot,
+    openMenu, closeMenu,
+  };
 
   // Accès pour les tests / la console
   window.LumiPlan = {

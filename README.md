@@ -21,6 +21,16 @@ Fonctionne hors ligne. Les seules bibliothèques utilisées sont incluses dans `
 [pdf.js](https://github.com/mozilla/pdf.js) 3.11.174 (Apache 2.0, Mozilla) pour l'affichage et
 [pdf-lib](https://github.com/Hopding/pdf-lib) 1.17.1 (MIT) pour l'export.
 
+## Interface
+
+- **Barre de titre** : document et feuille en cours, **recherche** dans le PDF (Ctrl+F), état de l'enregistrement, auteur,
+  thème clair / sombre, Atelier de symboles, aide.
+- **Ruban** par groupes : Fichier · Édition · Sélection · Annotation · Mesure · Éclairage · Révision. Sur un écran moins
+  large, les outils passent en icônes seules (le nom s'affiche au survol).
+- **Panneau de gauche** : Symboles · Liste (décompte, annotations) · Tableau (luminaires) · Circuits · Pages (révision).
+- **Panneau de droite** : propriétés de la sélection. **Barre d'état** : échelle, unités, pages, zoom.
+- **Écran d'accueil** avec les **documents récents** (Chrome / Edge : un clic rouvre le PDF et son projet).
+
 ## Fonctions
 
 | Catégorie | Outils |
@@ -31,6 +41,12 @@ Fonctionne hors ligne. Les seules bibliothèques utilisées sont incluses dans `
 | Mesures | **Calibration** (K) sur une cote connue ou échelles prédéfinies (1/8" = 1'-0", 1:100…), longueur, longueur de polyligne, aire — en pi-po, m ou mm |
 | Éclairage | Bibliothèque de **symboles** (encastrés, 2×4, 2×2, réglettes, linéaires, appliques, wall pack, rail, sortie, bloc d'urgence, détecteurs, interrupteurs, gradateurs, photocellule, panneau de contrôle) avec **étiquette de type** (A, B1…) |
 | Décompte | Comptage automatique par symbole + type, par page et total ; quantités mesurées |
+| Tableau des luminaires | Données par type (fabricant, modèle, W, lm, tension, K, montage, remarques), quantités et puissance ; tableau **placé sur la feuille** et exporté dans le PDF |
+| Circuits | Circuit et zone de contrôle par luminaire, charge (W) par circuit, zones sans contrôle signalées, coloration du plan, circuit inscrit sous les luminaires |
+| Révisions | Report des annotations sur la révision suivante, repérage des **zones modifiées**, nuages de révision automatiques |
+| Échelle | **Lecture automatique** de l'échelle inscrite sur chaque feuille (1/8" = 1'-0", 1:100…) |
+| Recherche | Texte du PDF (numéros de locaux, notes, noms de feuilles) avec surlignage |
+| Favoris | Symboles sur les touches **1 à 9** (★ dans la bibliothèque) |
 | Propriétés | Couleur, remplissage, épaisseur, opacité, trait, police, commentaire, auteur, dates |
 | Édition | Sélection multiple (Maj, rectangle), déplacement, poignées, Alt+glisser = dupliquer, copier/coller, annuler/rétablir |
 
@@ -122,6 +138,45 @@ Outil compagnon pour dessiner des **symboles avancés** et se bâtir une **banqu
 
 La banque est conservée dans le navigateur ; exportez-la régulièrement comme sauvegarde.
 
+## Tableau des luminaires (onglet *Tableau*)
+
+Chaque **type** correspond à l'**étiquette** des symboles (A, B1…). Cliquez sur un type pour saisir description, fabricant,
+modèle, puissance (W), flux (lm), tension, température de couleur, montage et remarques. Les quantités et la puissance totale
+se calculent seules.
+
+**Placer sur la feuille** (onglet Tableau ou ruban *Éclairage*) ajoute le tableau à la page : déplacez-le à la souris ;
+dans *Propriétés*, choisissez le titre, la portée (projet ou feuille), la taille du texte et les colonnes. Il se met à jour
+automatiquement et sort proprement dans le PDF remis aux professionnels (une seule marque « Tableau des luminaires » dans
+Bluebeam). Les données sont enregistrées avec le projet et incluses dans le CSV.
+
+## Circuits et zones de contrôle (onglet *Circuits*)
+
+Sélectionnez un ou plusieurs luminaires (rectangle ou Maj+clic) et saisissez **Circuit** (ex. P1-12) et **Zone contrôle**
+dans *Propriétés*. L'onglet affiche la **charge par circuit** (W, d'après le tableau des luminaires) et les **zones de contrôle**,
+avec un avertissement pour une zone qui contient des luminaires mais aucun détecteur, interrupteur ou gradateur. Un clic sur
+une ligne sélectionne ces luminaires. Le plan peut être **coloré par circuit, zone ou type**, et le circuit **inscrit sous chaque
+luminaire** (ruban *Éclairage*) ; couleurs et inscriptions apparaissent aussi dans le PDF exporté.
+
+## Nouvelle révision (ruban *Révision*)
+
+Avec le PDF de la révision précédente ouvert, **Nouvelle révision** → choisissez le nouveau PDF :
+
+1. les feuilles sont associées par **nom de feuille** (E-101 → E-101, même si l'ordre change), sinon par numéro ; ajustez au besoin ;
+2. les feuilles sont **comparées** et les zones modifiées repérées (contour magenta) ; option : **nuage de révision** sur chacune ;
+3. la nouvelle révision s'ouvre avec vos annotations, échelles et tableau des luminaires reportés.
+
+Naviguez d'une modification à l'autre avec *Précédente / Suivante* (ruban ou onglet *Pages*). **Enregistrez ensuite le projet de
+la nouvelle révision** (Ctrl+S) : celui de l'ancienne révision n'est pas modifié.
+
+## Échelle automatique et recherche
+
+- À l'ouverture d'une feuille non calibrée, LumiPlan lit l'échelle inscrite (cartouche, titres de vues) et propose de
+  l'appliquer ; **Échelle auto** (ruban *Mesure*) le fait pour toutes les feuilles et présente un bilan (feuilles à plusieurs
+  échelles et « échelle indiquée » laissées à votre choix). **Vérifiez toujours une cote connue** par feuille (outil Longueur) :
+  un PDF peut avoir été produit à une autre taille que celle prévue.
+- **Ctrl+F** : recherche dans le texte du PDF (sans tenir compte des accents ni des majuscules) ; Entrée / Maj+Entrée pour passer
+  d'un résultat à l'autre. Les plans numérisés (images) ne contiennent pas de texte cherchable.
+
 ## Enregistrer
 
 | Bouton | Résultat |
@@ -132,8 +187,12 @@ La banque est conservée dans le navigateur ; exportez-la régulièrement comme 
 | **PDF aplati** | Les annotations sont dessinées dans la page (plus modifiables) — pour une émission « finale ». |
 | **CSV** | Décompte par type et par page + liste complète, prêt pour Excel (séparateur `;`, UTF-8). |
 
-Une **sauvegarde automatique** est faite en continu dans le navigateur ; à la réouverture du même PDF, LumiPlan propose de la restaurer.
-Elle ne remplace pas le fichier projet (vider le cache du navigateur l'efface).
+**Enregistrement automatique dans le fichier projet (Chrome / Edge)** : au premier Ctrl+S, la fenêtre s'ouvre dans le dossier du
+PDF ; ensuite, le fichier projet est **réécrit automatiquement** quelques secondes après chaque modification (état affiché dans
+la barre de titre). En rouvrant ce PDF (bouton *Ouvrir* ou liste *Récents*), son projet est rechargé automatiquement.
+
+En plus, une copie est conservée en continu dans le navigateur ; elle sert de secours mais ne remplace pas le fichier projet
+(vider le cache du navigateur l'efface). Dans Firefox, l'enregistrement se fait par téléchargement (pas de réécriture automatique).
 
 ### Annotations des autres participants
 
@@ -159,13 +218,21 @@ Elles deviennent des annotations LumiPlan ordinaires : on peut les déplacer, mo
 - La lecture des annotations analyse tout le fichier : sur un très gros jeu de plans (centaines de Mo), l'ouverture prend
   quelques secondes de plus.
 - Texte exporté en Helvetica standard : les caractères hors Windows-1252 (rares en français) sont remplacés par `?`.
-- Pas d'accrochage (snap) aux objets du PDF, pas de calques, pas de comparaison de révisions, pas de sessions multi-utilisateurs.
+- **Comparaison de révisions** : elle compare l'image des feuilles. Si l'architecte a déplacé tout le dessin sur la feuille
+  (nouveau cadre, autre marge), presque tout est signalé comme modifié et les annotations reportées sont décalées d'autant :
+  vérifiez la première feuille. Les feuilles de taille différente sont mises à l'échelle proportionnellement.
+- **Échelle automatique** : seules les échelles écrites en texte sont lues (pas celles dessinées en image ni « échelle graphique »).
+- **Circuits** : un « dispositif de contrôle » est reconnu par la catégorie ou le nom du symbole (contrôle, détecteur, interrupteur,
+  gradateur, capteur). Renommez vos symboles en conséquence pour que la vérification des zones soit fiable.
+- Documents récents, ouverture dans le dossier du PDF et enregistrement automatique : Chrome et Edge seulement.
+- Pas d'accrochage (snap) aux objets du PDF, pas de calques, pas de sessions multi-utilisateurs.
 
 ## Raccourcis
 
 `V` sélection · `H` main · `S` symbole · `L` ligne · `A` flèche · `R` rectangle · `E` ellipse · `C` nuage · `P` polyligne · `G` polygone ·
 `F` main levée · `I` surligneur · `T` texte · `Q` bulle · `O` note · `K` calibrer · `M` longueur · `N` longueur polyligne · `B` aire ·
-`Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `[` `]` pivoter les symboles · flèches = déplacer.
+`Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `Ctrl+F` rechercher · `1`…`9` symboles favoris ·
+`[` `]` pivoter les symboles · flèches = déplacer.
 
 ## Structure
 
@@ -179,7 +246,11 @@ js/measure.js       échelles, unités, longueurs et aires
 js/exporter.js      export PDF aplati (pdf-lib)
 js/pdfnative.js     import / export des annotations PDF natives (auteurs, réponses)
 js/storage.js       IndexedDB, enregistrement de fichiers
-js/app.js           visionneuse, outils, panneaux, fichiers
+js/app.js           visionneuse, ruban, outils, panneaux, fichiers, enregistrement
+js/icons.js         jeu d'icônes vectorielles (LumiPlan et Atelier)
+js/schedule.js      tableau des luminaires, circuits et zones de contrôle
+js/textsearch.js    recherche de texte et lecture automatique de l'échelle
+js/revision.js      nouvelle révision : report des annotations et zones modifiées
 atelier.html        Atelier de symboles (css/atelier.css, js/atelier.js)
 dist/               versions autonomes (fichier unique) — régénérer avec : node tools/build-autonome.js
 tools/              script de construction des versions autonomes
