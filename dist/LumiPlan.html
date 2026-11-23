@@ -1277,7 +1277,12 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
 
   window.LP = window.LP || {};
   const LP = window.LP;
-  Object.assign(LP, { drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
+    // Contrôle d'éclairage (détecteur, interrupteur, gradateur, photocellule, capteur, panneau de contrôle) :
+  // reconnu par la catégorie ou le nom du symbole. Les contrôles n'ont pas de hauteur de montage.
+  const CONTROL_RE = /contr[oô]le|d[ée]tect|interrupt|gradat|photocell|capteur|sensor|switch|dimmer/i;
+  function isControlSym(sym) { return !!sym && CONTROL_RE.test(`${sym.cat || ''} ${sym.name || ''}`); }
+
+Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
 })();
 
 </script>
@@ -1537,7 +1542,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       // Inscriptions sous le symbole : circuit, hauteur de montage
       const under = [];
       if (env && env.ext && env.ext.showCircuit && a.circuit) under.push(String(a.circuit));
-      if (env && env.ext && env.ext.showHeight) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
+      if (env && env.ext && env.ext.showHeight && !LP.isControlSym(a.sym)) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
       if (under.length) {
         const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 7));
         const r = ((a.rot || 0) * Math.PI) / 180;
@@ -3328,7 +3333,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
-    a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage (m)
+    if (!LP.isControlSym(sym)) a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage des luminaires (m)
     pushUndo();
     S.annots.push(a);
     changed();
@@ -4547,10 +4552,15 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
           <datalist id="dlCircuits">${vals('circuit').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
           <label>Zone contrôle <input type="text" data-k="zone" list="dlZones" placeholder="${target.length > 1 && !same('zone') ? '(plusieurs)' : 'ex. Z1, Classe 104'}" value="${esc(same('zone'))}"></label>
           <datalist id="dlZones">${vals('zone').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
-        const dh = (env.ext && env.ext.defaultHeight) || 3.048;
-        const hv = (x) => (x.mh != null ? x.mh : dh);
-        const sameH = target.every((x) => Math.abs(hv(x) - hv(target[0])) < 1e-6);
-        h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${target.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(target[0]), S.unit, false)) : ''}" title="Hauteur de montage (sert aussi au calcul des longueurs de câble)"></label>`;
+        // Hauteur de montage : luminaires seulement (pas les contrôles d'éclairage)
+        const lum = target.filter((x) => !LP.isControlSym(x.sym));
+        if (lum.length) {
+          const dh = (env.ext && env.ext.defaultHeight) || 3.048;
+          const hv = (x) => (x.mh != null ? x.mh : dh);
+          const sameH = lum.every((x) => Math.abs(hv(x) - hv(lum[0])) < 1e-6);
+          const note = lum.length < target.length ? ` (${lum.length} luminaire(s) sur ${target.length})` : '';
+          h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${lum.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(lum[0]), S.unit, false)) : ''}" title="Hauteur de montage des luminaires${note} — sert aussi au calcul des longueurs de câble"></label>`;
+        }
         h += hooks.propsExtra.map((f) => f(target)).join('');
       }
       const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
@@ -4707,7 +4717,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       const m = LP.parseDim(v, S.unit, false);
       if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »\nExemples : 10'  9'-6"  3000 mm`); refreshProps(); return; }
       pushUndo();
-      for (const a of target) if (a.type === 'symbol') { a.mh = m; touch(a); }
+      for (const a of target) if (a.type === 'symbol' && !LP.isControlSym(a.sym)) { a.mh = m; touch(a); }
       changed(); refreshProps();
       return;
     }
@@ -5940,7 +5950,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     if (!VIEW.colorBy) return null;
     return colorFor(VIEW.colorBy === 'tag' ? a.tag : a[VIEW.colorBy]);
   };
-  const isControl = (a) => /contr|détect|detect|interrupt|gradat|capteur/i.test(`${a.sym.cat || ''} ${a.sym.name || ''}`);
+  const isControl = (a) => LP.isControlSym(a.sym);
 
   function circuitStats() {
     const m = new Map();
@@ -6765,14 +6775,17 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   }
 
   /* ---------------- Longueurs ---------------- */
-  const mh = (a) => (a && a.mh != null ? a.mh : env.ext.defaultHeight || 3.048);
+  // Hauteur d'un luminaire ; null pour un contrôle d'éclairage (pas de hauteur de montage)
+  const mh = (a) => (!a || LP.isControlSym(a.sym) ? null : a.mh != null ? a.mh : env.ext.defaultHeight || 3.048);
   function lengthOf(a) {
     const sc = env.scaleFor(a.page);
     if (!sc) return null;
     const g = LP.cableGeom(a, env);
     const A = byId(a.from), B = byId(a.to);
     const plan = g.len * sc.mpp;
-    const dh = Math.abs(mh(A) - mh(B));
+    // Différence de hauteur : seulement entre deux luminaires
+    const hA = mh(A), hB = mh(B);
+    const dh = hA != null && hB != null ? Math.abs(hA - hB) : 0;
     const total = (plan + dh + 2 * CFG.allowance) * (1 + CFG.reserve / 100);
     return { plan, dh, total };
   }
@@ -6893,7 +6906,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       <label>Épaisseur × <input type="number" data-cb="w" min="0.25" max="5" step="0.25" value="${(a.style && a.style.width) || 1}"></label>
       <h3>Longueur approximative</h3>
       ${one ? (L ? `<table class="cb-len"><tr><td>Sur le plan</td><td class="num">${fmtLen(L.plan)}</td></tr>
-          <tr><td>Différence de hauteur</td><td class="num">${fmtLen(L.dh)}</td></tr>
+          <tr><td>Différence de hauteur</td><td class="num">${mh(byId(a.from)) == null || mh(byId(a.to)) == null ? '— (contrôle)' : fmtLen(L.dh)}</td></tr>
           <tr><td>Raccordements (2 ×)</td><td class="num">${fmtLen(2 * CFG.allowance)}</td></tr>
           <tr><td>Réserve</td><td class="num">${CFG.reserve} %</td></tr>
           <tr class="tot"><td>Total</td><td class="num">${fmtLen(L.total)}</td></tr></table>`
@@ -6963,12 +6976,12 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     h += `<h3>Calcul</h3>
       <label class="cb-set">Réserve (%) <input type="number" id="cbRes" min="0" max="100" step="1" value="${CFG.reserve}"></label>
       <label class="cb-set">Raccordement / extrémité <input type="text" id="cbAllow" value="${esc(LP.fmtDim(CFG.allowance, S.unit, false))}"></label>
-      <label class="cb-set">Hauteur par défaut <input type="text" id="cbDefH" value="${esc(LP.fmtDim(env.ext.defaultHeight, S.unit, false))}" title="Hauteur de montage donnée aux symboles posés"></label>
-      <p class="hint">Longueur ≈ (courbe sur le plan + différence de hauteur de montage entre les deux extrémités + 2 × raccordement) × (1 + réserve). Estimation pour la soumission, pas un relevé de chantier.</p>
+      <label class="cb-set">Hauteur par défaut <input type="text" id="cbDefH" value="${esc(LP.fmtDim(env.ext.defaultHeight, S.unit, false))}" title="Hauteur de montage donnée aux luminaires posés (pas aux contrôles)"></label>
+      <p class="hint">Longueur ≈ (courbe sur le plan + différence de hauteur de montage entre deux luminaires + 2 × raccordement) × (1 + réserve). Les contrôles d'éclairage n'ont pas de hauteur : vers un contrôle, seul le raccordement s'ajoute. Estimation pour la soumission, pas un relevé de chantier.</p>
       <h3>Affichage</h3>
       <label class="inline"><input type="checkbox" id="cbLbl" ${VIEW.labels ? 'checked' : ''}> Type inscrit sur chaque câble</label>
       <label class="inline"><input type="checkbox" id="cbLen" ${VIEW.lengths ? 'checked' : ''}> Ajouter la longueur à l'étiquette</label>
-      <label class="inline"><input type="checkbox" id="cbH" ${VIEW.height ? 'checked' : ''}> Hauteur de montage sous les symboles</label>
+      <label class="inline"><input type="checkbox" id="cbH" ${VIEW.height ? 'checked' : ''}> Hauteur de montage sous les luminaires</label>
       <h3>Légende</h3><div class="cb-legend">${TYPES.map((t) => `<div><svg width="44" height="10"><line x1="2" y1="5" x2="42" y2="5" stroke="${t.color}" stroke-width="${t.width * 1.8}" stroke-dasharray="${t.dash.map((d) => d * t.width * 1.8).join(' ')}"/></svg>${t.label}</div>`).join('')}</div>`;
     if (all.length) {
       h += '<h3>Liens (feuille courante)</h3>';
@@ -7020,7 +7033,8 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     rows.push(['Page', 'Type', 'De', 'Hauteur de', 'À', 'Hauteur à', 'Sur le plan (m)', 'Total (m)', 'Total (pi)']);
     for (const c of cables().sort((x, y) => x.page - y.page)) {
       const A = byId(c.from), B = byId(c.to), L = lengthOf(c);
-      rows.push([c.page, (TYPE[c.ctype] || {}).label || c.ctype, symName(A), LP.fmtDim(mh(A), S.unit, false), symName(B), LP.fmtDim(mh(B), S.unit, false),
+      const fh = (x) => (mh(x) == null ? '(contrôle)' : LP.fmtDim(mh(x), S.unit, false));
+      rows.push([c.page, (TYPE[c.ctype] || {}).label || c.ctype, symName(A), fh(A), symName(B), fh(B),
         L ? String(Math.round(L.plan * 10) / 10).replace('.', ',') : '', L ? String(Math.round(L.total * 10) / 10).replace('.', ',') : '', L ? Math.round(L.total / FT) : '']);
     }
   });

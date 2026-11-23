@@ -382,5 +382,10 @@
 
   window.LP = window.LP || {};
   const LP = window.LP;
-  Object.assign(LP, { drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
+    // Contrôle d'éclairage (détecteur, interrupteur, gradateur, photocellule, capteur, panneau de contrôle) :
+  // reconnu par la catégorie ou le nom du symbole. Les contrôles n'ont pas de hauteur de montage.
+  const CONTROL_RE = /contr[oô]le|d[ée]tect|interrupt|gradat|photocell|capteur|sensor|switch|dimmer/i;
+  function isControlSym(sym) { return !!sym && CONTROL_RE.test(`${sym.cat || ''} ${sym.name || ''}`); }
+
+Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
 })();

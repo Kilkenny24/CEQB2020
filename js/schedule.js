@@ -277,7 +277,7 @@
     if (!VIEW.colorBy) return null;
     return colorFor(VIEW.colorBy === 'tag' ? a.tag : a[VIEW.colorBy]);
   };
-  const isControl = (a) => /contr|détect|detect|interrupt|gradat|capteur/i.test(`${a.sym.cat || ''} ${a.sym.name || ''}`);
+  const isControl = (a) => LP.isControlSym(a.sym);
 
   function circuitStats() {
     const m = new Map();

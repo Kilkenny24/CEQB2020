@@ -522,7 +522,7 @@
     a.rot = opt.rot != null ? opt.rot : symDefaults.rot;
     a.tag = sym.tag || '';
     a.showTag = symDefaults.showTag;
-    a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage (m)
+    if (!LP.isControlSym(sym)) a.mh = (env.ext && env.ext.defaultHeight) || 10 * 0.3048; // hauteur de montage des luminaires (m)
     pushUndo();
     S.annots.push(a);
     changed();
@@ -1741,10 +1741,15 @@
           <datalist id="dlCircuits">${vals('circuit').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
           <label>Zone contrôle <input type="text" data-k="zone" list="dlZones" placeholder="${target.length > 1 && !same('zone') ? '(plusieurs)' : 'ex. Z1, Classe 104'}" value="${esc(same('zone'))}"></label>
           <datalist id="dlZones">${vals('zone').map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
-        const dh = (env.ext && env.ext.defaultHeight) || 3.048;
-        const hv = (x) => (x.mh != null ? x.mh : dh);
-        const sameH = target.every((x) => Math.abs(hv(x) - hv(target[0])) < 1e-6);
-        h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${target.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(target[0]), S.unit, false)) : ''}" title="Hauteur de montage (sert aussi au calcul des longueurs de câble)"></label>`;
+        // Hauteur de montage : luminaires seulement (pas les contrôles d'éclairage)
+        const lum = target.filter((x) => !LP.isControlSym(x.sym));
+        if (lum.length) {
+          const dh = (env.ext && env.ext.defaultHeight) || 3.048;
+          const hv = (x) => (x.mh != null ? x.mh : dh);
+          const sameH = lum.every((x) => Math.abs(hv(x) - hv(lum[0])) < 1e-6);
+          const note = lum.length < target.length ? ` (${lum.length} luminaire(s) sur ${target.length})` : '';
+          h += `<label>Hauteur <input type="text" data-k="mh" placeholder="${lum.length > 1 && !sameH ? '(plusieurs)' : ''}" value="${sameH ? esc(LP.fmtDim(hv(lum[0]), S.unit, false)) : ''}" title="Hauteur de montage des luminaires${note} — sert aussi au calcul des longueurs de câble"></label>`;
+        }
         h += hooks.propsExtra.map((f) => f(target)).join('');
       }
       const ph = S.unit === 'ft' ? (paper ? 'ex. 1/4"' : `ex. 4' ou 48"`) : (paper ? 'ex. 6 mm' : 'ex. 1200 mm');
@@ -1901,7 +1906,7 @@
       const m = LP.parseDim(v, S.unit, false);
       if (!(m >= 0)) { alert(`Hauteur non reconnue : « ${v} »\nExemples : 10'  9'-6"  3000 mm`); refreshProps(); return; }
       pushUndo();
-      for (const a of target) if (a.type === 'symbol') { a.mh = m; touch(a); }
+      for (const a of target) if (a.type === 'symbol' && !LP.isControlSym(a.sym)) { a.mh = m; touch(a); }
       changed(); refreshProps();
       return;
     }

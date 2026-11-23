@@ -61,14 +61,17 @@
   }
 
   /* ---------------- Longueurs ---------------- */
-  const mh = (a) => (a && a.mh != null ? a.mh : env.ext.defaultHeight || 3.048);
+  // Hauteur d'un luminaire ; null pour un contrôle d'éclairage (pas de hauteur de montage)
+  const mh = (a) => (!a || LP.isControlSym(a.sym) ? null : a.mh != null ? a.mh : env.ext.defaultHeight || 3.048);
   function lengthOf(a) {
     const sc = env.scaleFor(a.page);
     if (!sc) return null;
     const g = LP.cableGeom(a, env);
     const A = byId(a.from), B = byId(a.to);
     const plan = g.len * sc.mpp;
-    const dh = Math.abs(mh(A) - mh(B));
+    // Différence de hauteur : seulement entre deux luminaires
+    const hA = mh(A), hB = mh(B);
+    const dh = hA != null && hB != null ? Math.abs(hA - hB) : 0;
     const total = (plan + dh + 2 * CFG.allowance) * (1 + CFG.reserve / 100);
     return { plan, dh, total };
   }
@@ -189,7 +192,7 @@
       <label>Épaisseur × <input type="number" data-cb="w" min="0.25" max="5" step="0.25" value="${(a.style && a.style.width) || 1}"></label>
       <h3>Longueur approximative</h3>
       ${one ? (L ? `<table class="cb-len"><tr><td>Sur le plan</td><td class="num">${fmtLen(L.plan)}</td></tr>
-          <tr><td>Différence de hauteur</td><td class="num">${fmtLen(L.dh)}</td></tr>
+          <tr><td>Différence de hauteur</td><td class="num">${mh(byId(a.from)) == null || mh(byId(a.to)) == null ? '— (contrôle)' : fmtLen(L.dh)}</td></tr>
           <tr><td>Raccordements (2 ×)</td><td class="num">${fmtLen(2 * CFG.allowance)}</td></tr>
           <tr><td>Réserve</td><td class="num">${CFG.reserve} %</td></tr>
           <tr class="tot"><td>Total</td><td class="num">${fmtLen(L.total)}</td></tr></table>`
@@ -259,12 +262,12 @@
     h += `<h3>Calcul</h3>
       <label class="cb-set">Réserve (%) <input type="number" id="cbRes" min="0" max="100" step="1" value="${CFG.reserve}"></label>
       <label class="cb-set">Raccordement / extrémité <input type="text" id="cbAllow" value="${esc(LP.fmtDim(CFG.allowance, S.unit, false))}"></label>
-      <label class="cb-set">Hauteur par défaut <input type="text" id="cbDefH" value="${esc(LP.fmtDim(env.ext.defaultHeight, S.unit, false))}" title="Hauteur de montage donnée aux symboles posés"></label>
-      <p class="hint">Longueur ≈ (courbe sur le plan + différence de hauteur de montage entre les deux extrémités + 2 × raccordement) × (1 + réserve). Estimation pour la soumission, pas un relevé de chantier.</p>
+      <label class="cb-set">Hauteur par défaut <input type="text" id="cbDefH" value="${esc(LP.fmtDim(env.ext.defaultHeight, S.unit, false))}" title="Hauteur de montage donnée aux luminaires posés (pas aux contrôles)"></label>
+      <p class="hint">Longueur ≈ (courbe sur le plan + différence de hauteur de montage entre deux luminaires + 2 × raccordement) × (1 + réserve). Les contrôles d'éclairage n'ont pas de hauteur : vers un contrôle, seul le raccordement s'ajoute. Estimation pour la soumission, pas un relevé de chantier.</p>
       <h3>Affichage</h3>
       <label class="inline"><input type="checkbox" id="cbLbl" ${VIEW.labels ? 'checked' : ''}> Type inscrit sur chaque câble</label>
       <label class="inline"><input type="checkbox" id="cbLen" ${VIEW.lengths ? 'checked' : ''}> Ajouter la longueur à l'étiquette</label>
-      <label class="inline"><input type="checkbox" id="cbH" ${VIEW.height ? 'checked' : ''}> Hauteur de montage sous les symboles</label>
+      <label class="inline"><input type="checkbox" id="cbH" ${VIEW.height ? 'checked' : ''}> Hauteur de montage sous les luminaires</label>
       <h3>Légende</h3><div class="cb-legend">${TYPES.map((t) => `<div><svg width="44" height="10"><line x1="2" y1="5" x2="42" y2="5" stroke="${t.color}" stroke-width="${t.width * 1.8}" stroke-dasharray="${t.dash.map((d) => d * t.width * 1.8).join(' ')}"/></svg>${t.label}</div>`).join('')}</div>`;
     if (all.length) {
       h += '<h3>Liens (feuille courante)</h3>';
@@ -316,7 +319,8 @@
     rows.push(['Page', 'Type', 'De', 'Hauteur de', 'À', 'Hauteur à', 'Sur le plan (m)', 'Total (m)', 'Total (pi)']);
     for (const c of cables().sort((x, y) => x.page - y.page)) {
       const A = byId(c.from), B = byId(c.to), L = lengthOf(c);
-      rows.push([c.page, (TYPE[c.ctype] || {}).label || c.ctype, symName(A), LP.fmtDim(mh(A), S.unit, false), symName(B), LP.fmtDim(mh(B), S.unit, false),
+      const fh = (x) => (mh(x) == null ? '(contrôle)' : LP.fmtDim(mh(x), S.unit, false));
+      rows.push([c.page, (TYPE[c.ctype] || {}).label || c.ctype, symName(A), fh(A), symName(B), fh(B),
         L ? String(Math.round(L.plan * 10) / 10).replace('.', ',') : '', L ? String(Math.round(L.total * 10) / 10).replace('.', ',') : '', L ? Math.round(L.total / FT) : '']);
     }
   });

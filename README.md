@@ -178,14 +178,17 @@ composante puis la suivante ; le tracé continue en chaîne (pratique pour le DM
 - Les câbles **suivent les symboles** déplacés ; supprimer un symbole supprime ses câbles ; copier un groupe copie les câbles entre
   les copies ; une nouvelle révision reporte aussi les câbles.
 
-**Longueurs approximatives** : (longueur de la courbe sur le plan + différence de hauteur de montage entre les deux extrémités
-\+ 2 × raccordement) × (1 + réserve). Réserve (10 %) et raccordement (1') réglables dans l'onglet *Câbles*, qui donne le total par type
-et la liste des liens ; détail complet dans le CSV. Estimation pour la soumission, pas un relevé de chantier : le tracé réel
-(chemins de câbles, descentes, passages) n'est pas modélisé.
+**Longueurs approximatives** : (longueur de la courbe sur le plan + différence de hauteur de montage entre deux luminaires
+\+ 2 × raccordement) × (1 + réserve). Vers un contrôle d'éclairage (sans hauteur de montage), seul le raccordement s'ajoute.
+Réserve (10 %) et raccordement (1') réglables dans l'onglet *Câbles*, qui donne le total par type et la liste des liens ; détail
+complet dans le CSV. Estimation pour la soumission, pas un relevé de chantier : le tracé réel (chemins de câbles, descentes,
+passages) n'est pas modélisé.
 
-**Hauteur de montage** : chaque symbole posé reçoit **10'-0"** par défaut (réglable : propriétés de l'outil Symbole ou onglet
-*Câbles*) ; modifiable par symbole ou sélection multiple dans *Propriétés*. Bouton **Hauteurs** : inscrit la hauteur sous chaque
-symbole, aussi dans le PDF exporté.
+**Hauteur de montage (luminaires seulement)** : chaque luminaire posé reçoit **10'-0"** par défaut (réglable : propriétés de
+l'outil Symbole ou onglet *Câbles*) ; modifiable par luminaire ou sélection multiple dans *Propriétés*. Les **contrôles
+d'éclairage** (détecteurs, interrupteurs, gradateurs, photocellules, capteurs, panneaux de contrôle) n'ont pas de hauteur ; ils
+sont reconnus par la catégorie ou le nom du symbole. Bouton **Hauteurs** : inscrit la hauteur sous chaque luminaire, aussi
+dans le PDF exporté.
 
 ## Nouvelle révision (ruban *Révision*)
 

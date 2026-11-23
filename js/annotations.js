@@ -160,7 +160,7 @@
       // Inscriptions sous le symbole : circuit, hauteur de montage
       const under = [];
       if (env && env.ext && env.ext.showCircuit && a.circuit) under.push(String(a.circuit));
-      if (env && env.ext && env.ext.showHeight) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
+      if (env && env.ext && env.ext.showHeight && !LP.isControlSym(a.sym)) under.push('H ' + LP.fmtDim(a.mh != null ? a.mh : (env.ext.defaultHeight || 3.048), env.unit ? env.unit() : 'ft', false));
       if (under.length) {
         const fs = Math.max(4.5, Math.min(Math.max(sz.w, sz.h) * 0.45, 7));
         const r = ((a.rot || 0) * Math.PI) / 180;
