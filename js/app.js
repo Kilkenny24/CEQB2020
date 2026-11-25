@@ -10,7 +10,7 @@
 
   /* ======================= État ======================= */
   const S = {
-    pdf: null, pdfBytes: null, cleanBytes: null, native: null, fileName: '', fingerprint: '', numPages: 0, pageLabels: null,
+    pdf: null, pdfBytes: null, cleanBytes: null, native: null, fileName: '', rot: {}, fingerprint: '', numPages: 0, pageLabels: null,
     pageNum: 1, page: null, vp: null, // pdf.js page + viewport échelle 1
     zoom: 1, pan: { x: 0, y: 0 },
     annots: [], sel: new Set(),
@@ -77,7 +77,7 @@
   const TWO_POINT = new Set(['line', 'arrow', 'rect', 'ellipse', 'cloud', 'highlight', 'text', 'length', 'calibrate']);
   const MULTI_POINT = new Set(['polyline', 'polygon', 'polylength', 'area']);
 
-  const env = { scaleFor: (p) => S.scales[p] || null, unit: () => S.unit };
+  const env = { scaleFor: (p) => S.scales[p] || null, unit: () => S.unit, rotation: (p) => S.rot[p] || 0 };
   LP.env = env;
 
   /* ======================= DOM ======================= */
@@ -169,6 +169,7 @@
     S.annots = await importNative(pdf, native);
     S.sel.clear();
     S.scales = {};
+    S.rot = {};
     S.undo = []; S.redo = [];
     S.projHandle = null;
     S.dirty = false;
@@ -232,7 +233,7 @@
     finishMulti(true);
     S.pageNum = n;
     S.page = await S.pdf.getPage(n);
-    S.vp = S.page.getViewport({ scale: 1 });
+    S.vp = viewport(S.page, n, { scale: 1 });
     AR = null; // un réseau en cours ne suit pas le changement de page
     S.sel.clear();
     hi = null;
@@ -255,9 +256,9 @@
   async function ensurePreview(n) {
     if (previewCache.has(n)) return previewCache.get(n);
     const page = n === S.pageNum ? S.page : await S.pdf.getPage(n);
-    const v1 = page.getViewport({ scale: 1 });
+    const v1 = viewport(page, n, { scale: 1 });
     const scale = Math.min(3000 / Math.max(v1.width, v1.height), 3);
-    const vp = page.getViewport({ scale });
+    const vp = viewport(page, n, { scale });
     const c = document.createElement('canvas');
     c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
     const entry = { canvas: c, scale, ready: false, promise: null };
@@ -281,7 +282,7 @@
     const zoom = S.zoom, pan = { ...S.pan }, n = S.pageNum;
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(vw * dpr)); c.height = Math.max(1, Math.round(vh * dpr));
-    const vp = S.page.getViewport({ scale: zoom * dpr, offsetX: pan.x * dpr, offsetY: pan.y * dpr });
+    const vp = viewport(S.page, n, { scale: zoom * dpr, offsetX: pan.x * dpr, offsetY: pan.y * dpr });
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, c.width, c.height);
@@ -467,7 +468,7 @@
   }
 
   /* ======================= Historique ======================= */
-  function snapshot() { return JSON.stringify({ a: S.annots, s: S.scales }); }
+  function snapshot() { return JSON.stringify({ a: S.annots, s: S.scales, r: S.rot }); }
   function pushUndo(snap) {
     S.undo.push(snap || snapshot());
     if (S.undo.length > 150) S.undo.shift();
@@ -477,6 +478,9 @@
   function restoreSnap(sn) {
     const o = JSON.parse(sn);
     S.annots = o.a; S.scales = o.s || {};
+    const rotChanged = JSON.stringify(o.r || {}) !== JSON.stringify(S.rot);
+    S.rot = o.r || {};
+    if (rotChanged) rerender();
     const ids = new Set(S.annots.map((a) => a.id));
     for (const id of [...S.sel]) if (!ids.has(id)) S.sel.delete(id);
     updateScaleUI();
@@ -996,6 +1000,7 @@
     if (inField) return;
     if (ctrl) {
       const k = e.key.toLowerCase();
+      if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { e.preventDefault(); rotatePages([S.pageNum], e.key === 'ArrowRight' ? 90 : -90); return; }
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
       else if (k === 'c') copySel();
@@ -1494,7 +1499,7 @@
     const setIc = (sel, name) => { const e = $(sel); if (e) e.innerHTML = LP.icon(name); };
     setIc('.tb-brand .logo', 'logo'); setIc('.start-logo', 'logo'); setIc('.tb-search .sicon', 'search');
     setIc('#lnkAtelier', 'atelier'); setIc('#btnHelp', 'help');
-    setIc('#btnPrev', 'prev'); setIc('#btnNext', 'next'); setIc('#btnZoomOut', 'zoomout'); setIc('#btnZoomIn', 'zoomin'); setIc('#btnFit', 'fit');
+    setIc('#btnPrev', 'prev'); setIc('#btnNext', 'next'); setIc('#btnRotL', 'rotl'); setIc('#btnRotR', 'rotr'); setIc('#btnZoomOut', 'zoomout'); setIc('#btnZoomIn', 'zoomin'); setIc('#btnFit', 'fit');
   }
   const menuButtons = {};
   // Petit menu contextuel : items = [{ icon, label, fn, danger } | 'sep']
@@ -2494,14 +2499,76 @@
     if (!S.pdf) { box.innerHTML = ''; return; }
     const counts = {};
     for (const a of S.annots) counts[a.page] = (counts[a.page] || 0) + 1;
-    let h = '';
+    let h = `<div class="rot-row"><span>Pivoter</span>
+        <button data-rot="-90" title="Pivoter la page courante de 90° vers la gauche (Ctrl+Maj+←)">${LP.icon('rotl')}Page</button>
+        <button data-rot="90" title="Pivoter la page courante de 90° vers la droite (Ctrl+Maj+→)">${LP.icon('rotr')}Page</button>
+        <button data-rot-all="-90" title="Pivoter toutes les pages vers la gauche">${LP.icon('rotl')}Toutes</button>
+        <button data-rot-all="90" title="Pivoter toutes les pages vers la droite">${LP.icon('rotr')}Toutes</button></div>`;
     for (let i = 1; i <= S.numPages; i++) {
       const lbl = S.pageLabels ? S.pageLabels[i - 1] : '';
-      const sc = S.scales[i] ? ' · ' + (S.scales[i].label || 'échelle') : '';
+      const sc = (S.scales[i] ? ' · ' + (S.scales[i].label || 'échelle') : '') + (S.rot[i] ? ` · ↻ ${S.rot[i]}°` : '');
       h += `<div class="item${i === S.pageNum ? ' cur' : ''}" data-p="${i}"><span>Page ${i}${lbl && lbl !== String(i) ? ' (' + esc(lbl) + ')' : ''}<small class="meta">${esc(sc)}</small></span><span class="meta">${counts[i] || ''}</span></div>`;
     }
     box.innerHTML = h;
     box.querySelectorAll('.item').forEach((el) => el.addEventListener('click', () => goPage(+el.dataset.p)));
+    box.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => rotatePages([S.pageNum], +b.dataset.rot)));
+    box.querySelectorAll('[data-rot-all]').forEach((b) => b.addEventListener('click', () => rotatePages(Array.from({ length: S.numPages }, (_, i) => i + 1), +b.dataset.rotAll)));
+  }
+
+  /* ======================= Rotation des pages ======================= */
+  // Vue d'une page avec sa rotation propre (/Rotate du PDF) + la rotation ajoutée dans LumiPlan
+  function viewport(page, n, opts) {
+    return page.getViewport(Object.assign({ rotation: (page.rotate + (S.rot[n] || 0) + 360) % 360 }, opts));
+  }
+  function rerender() { previewCache.clear(); hi = null; if (S.pdf) goPage(S.pageNum, true); }
+  /*
+   * Pivote des pages de ±90° : les annotations sont recalculées pour rester à la même place
+   * sur le dessin (passage par l'espace PDF), les symboles tournent avec le plan, les textes restent lisibles.
+   */
+  // Recalcule des annotations d'une vue (vOld) vers une autre (vNew) de la même page, tournée de delta degrés
+  function rotateAnnots(list, vOld, vNew, delta) {
+    const M = (p) => vNew.convertToViewportPoint(...vOld.convertToPdfPoint(p[0], p[1]));
+    const keepBox = (p0, p1) => { // boîte de texte : même taille, centre déplacé (le texte reste horizontal)
+      const w = Math.abs(p1[0] - p0[0]), h = Math.abs(p1[1] - p0[1]);
+      const c = M([(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2]);
+      return [[c[0] - w / 2, c[1] - h / 2], [c[0] + w / 2, c[1] + h / 2]];
+    };
+    for (const a of list) {
+      const unchanged = a.src && a.srcStamp === LP.annotStamp(a);
+      if (a.type === 'text') a.pts = keepBox(a.pts[0], a.pts[1]);
+      else if (a.type === 'callout') { const b = keepBox(a.pts[1], a.pts[2]); a.pts = [M(a.pts[0]), b[0], b[1]]; }
+      else if (a.type === 'note') { const c = M([a.pts[0][0] + LP.NOTE_SIZE / 2, a.pts[0][1] + LP.NOTE_SIZE / 2]); a.pts = [[c[0] - LP.NOTE_SIZE / 2, c[1] - LP.NOTE_SIZE / 2]]; }
+      else if (a.type === 'schedule') { const [x, y, w, h] = LP.bboxAnnotation(a); const c = M([x + w / 2, y + h / 2]); a.pts = [[c[0] - w / 2, c[1] - h / 2]]; }
+      else {
+        a.pts = a.pts.map(M);
+        if (a.type === 'symbol') a.rot = (((a.rot || 0) + delta) % 360 + 360) % 360;
+        if (a.type === 'room' && a.ceil && delta % 180) a.ceil.rot = a.ceil.rot === 90 ? 0 : 90;
+      }
+      if (unchanged) a.srcStamp = LP.annotStamp(a); // annotation d'origine du PDF : toujours « non modifiée »
+    }
+  }
+  // opts.silent : sans annulation ni message (report d'une révision)
+  async function rotatePages(pages, delta, opts = {}) {
+    if (!S.pdf) { toast("Ouvrez d'abord un PDF"); return; }
+    delta = ((delta % 360) + 360) % 360;
+    if (!delta) return;
+    commitText();
+    if (!opts.silent) pushUndo();
+    for (const n of pages) {
+      const page = await S.pdf.getPage(n);
+      const vOld = viewport(page, n, { scale: 1 });
+      S.rot[n] = ((S.rot[n] || 0) + delta) % 360;
+      if (!S.rot[n]) delete S.rot[n];
+      const vNew = viewport(page, n, { scale: 1 });
+      rotateAnnots(S.annots.filter((a) => a.page === n), vOld, vNew, delta);
+    }
+    hooks.rotate.forEach((f) => f(pages));
+    rerender();
+    changed();
+    refreshPanels();
+    if (opts.silent) return;
+    delta = delta === 270 ? -90 : delta;
+    toast(`${pages.length > 1 ? pages.length + ' pages pivotées' : 'Page pivotée'} de ${Math.abs(delta)}° vers la ${delta > 0 ? 'droite' : 'gauche'} — le PDF exporté le sera aussi`, 5000);
   }
 
   /* ======================= Échelle ======================= */
@@ -2560,6 +2627,7 @@
       annots: S.annots, images: usedImg,
       deletedSrc: deletedSrc(),
       library: S.library,
+      rot: S.rot,
       ext: {},
     };
     hooks.save.forEach((f) => f(p.ext));
@@ -2569,6 +2637,7 @@
 
   function applyProject(p, silent) {
     hooks.load.forEach((f) => f(p.ext || {}));
+    if (JSON.stringify(p.rot || {}) !== JSON.stringify(S.rot)) { S.rot = Object.assign({}, p.rot || {}); rerender(); }
     const incoming = (p.annots || []).filter((a) => a && a.pts && a.type);
     // Sécurité : une annotation d'origine du PDF absente du projet (projet plus
     // ancien que l'import) est conservée, pour ne jamais effacer le commentaire
@@ -2761,6 +2830,8 @@
     $('#btnUndo').onclick = undo;
     $('#btnRedo').onclick = redo;
     $('#btnPrev').onclick = () => goPage(S.pageNum - 1);
+    $('#btnRotL').onclick = () => rotatePages([S.pageNum], -90);
+    $('#btnRotR').onclick = () => rotatePages([S.pageNum], 90);
     $('#btnNext').onclick = () => goPage(S.pageNum + 1);
     $('#btnZoomIn').onclick = () => zoomAt(1.25, vw / 2, vh / 2);
     $('#btnZoomOut').onclick = () => zoomAt(0.8, vw / 2, vh / 2);
@@ -2863,7 +2934,7 @@
   }
 
   /* ======================= Interface interne pour les modules ======================= */
-  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {} };
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {}, rotate: [] };
   LP.app = {
     S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
     goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
@@ -2875,7 +2946,9 @@
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
-    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, setStatusHint: (t) => { $('#statusTool').textContent = t; },
+    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, viewport, rotatePages, rotateAnnots, rerender,
+    // Point du repère de page sans aucune rotation (ni /Rotate du PDF, ni rotation LumiPlan) → repère affiché
+    baseToView(p) { const b = S.page.getViewport({ scale: 1, rotation: 0 }); return S.vp.convertToViewportPoint(...b.convertToPdfPoint(p[0], p[1])); }, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,
     openMenu, closeMenu,
   };

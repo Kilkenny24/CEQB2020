@@ -193,6 +193,10 @@
       if (!map.has(a.page) || a.type === 'calibrate') continue;
       if (a.src && !o.others) continue;
       const c = JSON.parse(JSON.stringify(a));
+      if (S.rot[a.page]) {
+        const pg = await S.pdf.getPage(a.page);
+        app.rotateAnnots([c], app.viewport(pg, a.page, { scale: 1 }), pg.getViewport({ scale: 1 }), 360 - S.rot[a.page]);
+      }
       delete c.src; delete c.srcStamp;
       (c.replies || []).forEach((r) => { delete r.src; delete r.srcText; });
       c.id = LP.uid();
@@ -219,6 +223,8 @@
     const extData = {};
     app.hooks.save.forEach((f) => f(extData));
     const fromName = S.fileName;
+    const rotQ = {};
+    for (const [p, q] of map) if (S.rot[p]) rotQ[q] = S.rot[p];
     // 3. Ouverture de la révision (le document de comparaison est libéré après : le moteur PDF est partagé)
     prog('Ouverture de la révision…');
     S.pdfHandle = handle;
@@ -230,11 +236,17 @@
       },
     });
     await newDoc.destroy().catch(() => {});
+    for (const [q, r] of Object.entries(rotQ)) await app.rotatePages([+q], r, { silent: true });
     // Zones modifiées : coordonnées de page de la nouvelle révision
     REV.from = fromName; REV.to = name; REV.date = new Date().toISOString(); REV.boxes = {};
     for (const [q, list] of Object.entries(boxes)) {
-      const vp = (await S.pdf.getPage(+q)).getViewport({ scale: 1 });
-      REV.boxes[q] = list.map((b) => ({ x: b.x * vp.width, y: b.y * vp.height, w: b.w * vp.width, h: b.h * vp.height }));
+      const pg = await S.pdf.getPage(+q);
+      const vp = pg.getViewport({ scale: 1 }), vr = app.viewport(pg, +q, { scale: 1 });
+      REV.boxes[q] = list.map((b) => { // zones calculées sans rotation → repère affiché
+        const p0 = vr.convertToViewportPoint(...vp.convertToPdfPoint(b.x * vp.width, b.y * vp.height));
+        const p1 = vr.convertToViewportPoint(...vp.convertToPdfPoint((b.x + b.w) * vp.width, (b.y + b.h) * vp.height));
+        return { x: Math.min(p0[0], p1[0]), y: Math.min(p0[1], p1[1]), w: Math.abs(p1[0] - p0[0]), h: Math.abs(p1[1] - p0[1]) };
+      });
     }
     REV.show = true;
     buildList();

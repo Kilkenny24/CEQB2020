@@ -373,10 +373,14 @@
       const arr = page.node.lookupMaybe(N('Annots'), L.PDFArray);
       const had = arr ? arr.asArray() : [];
       const touchesImported = had.some((o) => imported.has(refTag(o)));
+      const rotExtra = env.rotation ? env.rotation(pageNum) : 0;
+      if (rotExtra) page.setRotation(L.degrees((page.getRotation().angle + rotExtra) % 360));
       if (!list.length && !touchesImported) continue;
 
       const keep = had.filter((o) => !imported.has(refTag(o)));
-      const vp = (await pdfjsDoc.getPage(pageNum)).getViewport({ scale: 1 });
+      const jsPage = await pdfjsDoc.getPage(pageNum);
+      const extra = env.rotation ? env.rotation(pageNum) : 0;
+      const vp = jsPage.getViewport({ scale: 1, rotation: (jsPage.rotate + extra) % 360 });
       const inv = invert(vp.transform);
       const toPdf = (p) => [inv[0] * p[0] + inv[2] * p[1] + inv[4], inv[1] * p[0] + inv[3] * p[1] + inv[5]];
       const W = { doc, ctx, page, inv, toPdf, font, fontBold, imgRefs, env };

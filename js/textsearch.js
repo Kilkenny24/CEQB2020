@@ -17,9 +17,10 @@
 
   async function pageText(n) {
     if (indexDoc !== S.pdf) { index = new Map(); indexDoc = S.pdf; }
-    if (index.has(n)) return index.get(n);
+    const rot = S.rot[n] || 0;
+    if (index.has(n) && index.get(n).rot === rot) return index.get(n);
     const page = await S.pdf.getPage(n);
-    const vp = page.getViewport({ scale: 1 });
+    const vp = app.viewport(page, n, { scale: 1 });
     const tc = await page.getTextContent();
     const items = [];
     for (const it of tc.items) {
@@ -29,6 +30,7 @@
       const ang = Math.atan2(m[1], m[0]);
       items.push({ str: it.str, norm: norm(it.str), x: m[4], y: m[5], w: it.width || h * it.str.length * 0.5, h, ang });
     }
+    items.rot = rot;
     index.set(n, items);
     return items;
   }

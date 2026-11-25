@@ -219,6 +219,17 @@ Avec le PDF de la révision précédente ouvert, **Nouvelle révision** → choi
 Naviguez d'une modification à l'autre avec *Précédente / Suivante* (ruban ou onglet *Pages*). **Enregistrez ensuite le projet de
 la nouvelle révision** (Ctrl+S) : celui de l'ancienne révision n'est pas modifié.
 
+## Pivoter les pages
+
+Boutons **⟲ / ⟳** à droite de la navigation des pages (barre du bas), raccourci **Ctrl+Maj+← / →**, ou onglet *Pages*
+(page courante ou **toutes les pages**). Rotation par quarts de tour, annulable (Ctrl+Z), enregistrée avec le projet.
+
+- Les annotations suivent le dessin : symboles, locaux, portes, plafonds (orientation 2×4 ajustée), mesures, câbles, nuages.
+  Les textes, bulles, notes et le tableau restent **horizontaux** (lisibles) : seul leur emplacement suit le plan.
+- L'échelle ne change pas ; la recherche, le magnétisme de la grille et *Nouvelle révision* tiennent compte de la rotation
+  (la nouvelle révision est pivotée comme l'ancienne).
+- Le PDF exporté (aplati ou natif) est réellement pivoté (`/Rotate`), donc il s'ouvre dans le bon sens dans Bluebeam/Acrobat.
+
 ## Échelle automatique et recherche
 
 - À l'ouverture d'une feuille non calibrée, LumiPlan lit l'échelle inscrite (cartouche, titres de vues) et propose de
@@ -283,7 +294,7 @@ Elles deviennent des annotations LumiPlan ordinaires : on peut les déplacer, mo
 `V` sélection · `H` main · `S` symbole · `L` ligne · `A` flèche · `R` rectangle · `E` ellipse · `C` nuage · `P` polyligne · `G` polygone ·
 `F` main levée · `I` surligneur · `T` texte · `Q` bulle · `O` note · `K` calibrer · `M` longueur · `N` longueur polyligne · `B` aire ·
 `Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `Ctrl+F` rechercher · `1`…`9` symboles favoris ·
-`W` câble · `U` local · `D` porte · `J` plafond · `[` `]` pivoter les symboles · flèches = déplacer.
+`W` câble · `U` local · `D` porte · `J` plafond · `[` `]` pivoter les symboles · `Ctrl+Maj+←/→` pivoter la page · flèches = déplacer.
 
 ## Structure
 

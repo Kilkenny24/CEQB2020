@@ -41,7 +41,9 @@
       if (pageNum < 1 || pageNum > doc.getPageCount()) continue;
       const page = doc.getPage(pageNum - 1);
       const jsPage = await pdfjsDoc.getPage(pageNum);
-      const vp = jsPage.getViewport({ scale: 1 });
+      const extra = env.rotation ? env.rotation(pageNum) : 0;
+      const vp = jsPage.getViewport({ scale: 1, rotation: (jsPage.rotate + extra) % 360 });
+      if (extra) page.setRotation(L.degrees((jsPage.rotate + extra) % 360));
       const inv = invert(vp.transform);
 
       const gs = new Map();

@@ -78,6 +78,8 @@
     door: '<path d="M4 20h6M14 20h6" stroke-width="2.4"/><path d="M10 20V10"/><path d="M10 10a10 10 0 0110 10"/>',
     ceiling: '<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18" opacity=".7"/>',
     magnet: '<path d="M6 4v8a6 6 0 0012 0V4"/><path d="M6 4h4v8a2 2 0 004 0V4h4"/><path d="M6 8h4M14 8h4"/>',
+    rotl: '<path d="M4 4v6h6"/><path d="M4.5 10A8 8 0 1 1 6 16.5"/>',
+    rotr: '<path d="M20 4v6h-6"/><path d="M19.5 10A8 8 0 1 0 18 16.5"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   };
   window.LP = window.LP || {};

@@ -37,7 +37,7 @@
     if (!CFG.snap || !sc) return p;
     const g = GRID[S.pageNum];
     const step = g ? g.step : (S.unit === 'ft' ? FT : 0.1) / sc.mpp;
-    const ox = g ? g.ox : 0, oy = g ? g.oy : 0;
+    const [ox, oy] = g ? app.baseToView([g.ox, g.oy]) : [0, 0]; // grille définie sans rotation
     return [ox + Math.round((p[0] - ox) / step) * step, oy + Math.round((p[1] - oy) / step) * step];
   }
   const fmtL = (pt) => { const sc = env.scaleFor(S.pageNum); return sc ? LP.fmtDim(pt * sc.mpp, S.unit, false) : `${pt.toFixed(0)} pt`; };
