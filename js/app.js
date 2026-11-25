@@ -42,6 +42,7 @@
     calibrate: { stroke: '#ff7a00', width: 1, opacity: 1, dash: 'dash', fontSize: 9 },
     note: { stroke: '#ffd400', width: 1, opacity: 1, dash: 'solid' },
     markup: { stroke: '#ffeb3b', width: 1, opacity: 0.4, dash: 'solid' },
+    image: { stroke: '#333333', fill: 'none', width: 0, opacity: 1, dash: 'solid' },
   };
   let defaults = JSON.parse(JSON.stringify(DEFAULT_STYLE));
   const symDefaults = { rot: 0, showTag: true };
@@ -214,9 +215,14 @@
       const vp = page.getViewport({ scale: 1 });
       const P = (x, y) => vp.convertToViewportPoint(x, y);
       for (const e of entries) {
-        try { const a = LP.nativeToModel(e, pageNum, P); if (a) out.push(a); } catch (err) { console.warn('Annotation ignorée', e, err); }
+        try {
+          const a = LP.nativeToModel(e, pageNum, P);
+          if (a && a._imgData) { if (a.img && !S.images[a.img]) S.images[a.img] = a._imgData; delete a._imgData; }
+          if (a) out.push(a);
+        } catch (err) { console.warn('Annotation ignorée', e, err); }
       }
     }
+    loadImageEls();
     return out;
   }
   LP.annotsDiffer = (x, y) => JSON.stringify(x.map(LP.annotStamp)) !== JSON.stringify(y.map(LP.annotStamp));
@@ -431,7 +437,7 @@
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
       if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) {
-        for (const p of a.pts) {
+        for (const p of a.type === 'image' ? imgCorners(a) : a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
           octx.strokeRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -607,6 +613,11 @@
     const a = S.annots.find((q) => S.sel.has(q.id));
     if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) return null;
     const r = 6 / S.zoom;
+    if (a.type === 'image') {
+      const c = imgCorners(a);
+      for (let i = 0; i < 4; i++) if (Math.abs(c[i][0] - x) <= r && Math.abs(c[i][1] - y) <= r) return { a, i, img: c[(i + 2) % 4] };
+      return null;
+    }
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
   }
@@ -642,7 +653,7 @@
     if (hooks.tool[tool]) { hooks.tool[tool].down(p, e); return; }
     if (tool === 'select') {
       const h = handleHit(...p);
-      if (h) { drag = { kind: 'handle', a: h.a, i: h.i, snap: snapshot(), moved: false }; return; }
+      if (h) { drag = { kind: 'handle', a: h.a, i: h.i, opp: h.img, snap: snapshot(), moved: false }; return; }
       const a = topHit(...p);
       if (a) {
         if (e.shiftKey || e.ctrlKey) {
@@ -744,6 +755,7 @@
       case 'handle': {
         drag.moved = true;
         let q = p;
+        if (drag.opp) { resizeImage(drag.a, drag.opp, p, e.shiftKey); drawOverlay(); break; }
         if (e.shiftKey && drag.a.pts.length === 2) q = constrain(drag.a.pts[1 - drag.i], p, drag.a.type);
         drag.a.pts[drag.i] = q;
         drawOverlay();
@@ -1003,8 +1015,8 @@
       if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { e.preventDefault(); rotatePages([S.pageNum], e.key === 'ArrowRight' ? 90 : -90); return; }
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
-      else if (k === 'c') copySel();
-      else if (k === 'v') paste();
+      else if (k === 'c') { copySel(); copiedAt = Date.now(); }
+      else if (k === 'v') { clearTimeout(pasteTimer); pasteTimer = setTimeout(paste, 120); }
       else if (k === 'd') { e.preventDefault(); copySel(); paste(); }
       else if (k === 'a') { e.preventDefault(); S.annots.forEach((a) => a.page === S.pageNum && S.sel.add(a.id)); refreshProps(); drawOverlay(); }
       return;
@@ -1303,6 +1315,26 @@
     return out.filter((c) => c.type !== 'door' || c.room);
   }
 
+  /* ---- Images : coins et redimensionnement ---- */
+  function imgCorners(a) {
+    const [p, q] = a.pts;
+    const x0 = Math.min(p[0], q[0]), y0 = Math.min(p[1], q[1]), x1 = Math.max(p[0], q[0]), y1 = Math.max(p[1], q[1]);
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  }
+  // Proportions affichées (largeur / hauteur) compte tenu de la rotation de l'image
+  function imgAspect(a) { const r = a.aspect || 1; return (a.rot || 0) % 180 ? 1 / r : r; }
+  // Coin opposé fixe ; proportions gardées sauf avec Maj (ou si l'option est décochée)
+  function resizeImage(a, o, p, shift) {
+    let dx = p[0] - o[0], dy = p[1] - o[1];
+    const min = 4;
+    let w = Math.max(Math.abs(dx), min), h = Math.max(Math.abs(dy), min);
+    if (a.keepAspect !== false && !shift) {
+      const ar = imgAspect(a);
+      if (w / h > ar) h = w / ar; else w = h * ar;
+    }
+    a.pts = [[o[0], o[1]], [o[0] + (dx < 0 ? -w : w), o[1] + (dy < 0 ? -h : h)]];
+  }
+
   function copySel() {
     S.clipboard = S.annots.filter((a) => S.sel.has(a.id)).map((a) => JSON.parse(JSON.stringify(a)));
     if (S.clipboard.length) toast(`${S.clipboard.length} annotation(s) copiée(s)`);
@@ -1323,6 +1355,23 @@
     S.clipboard.forEach((c) => { c.pts.forEach((q) => { q[0] += off; q[1] += off; }); c.page = S.pageNum; });
     changed(); refreshProps();
   }
+
+  let pasteTimer = 0, copiedAt = 0;
+  const isTyping = () => { const t = (document.activeElement && document.activeElement.tagName || '').toLowerCase(); return t === 'input' || t === 'textarea' || t === 'select' || !!editing; };
+  // Copie d'annotations : on remplace le contenu du presse-papiers système pour qu'une ancienne capture ne soit pas recollée
+  document.addEventListener('copy', (e) => {
+    if (isTyping() || Date.now() - copiedAt > 500 || !S.sel.size) return;
+    e.clipboardData.setData('text/plain', `LumiPlan : ${S.sel.size} annotation(s)`);
+    e.preventDefault();
+  });
+  document.addEventListener('paste', (e) => {
+    if (isTyping() || !S.pdf) return;
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => /^image\//.test(f.type));
+    if (!files.length) return; // collage normal des annotations (minuterie)
+    clearTimeout(pasteTimer);
+    e.preventDefault();
+    for (const f of hooks.pasteImage) if (f(files[0], hover)) return;
+  });
 
   function updateCursor(p) {
     if (spaceDown || S.tool === 'pan') { over.style.cursor = 'grab'; return; }
@@ -1367,7 +1416,8 @@
       ] },
     ] },
     { title: 'Sélection', items: [{ tool: 'select', big: true }, { tool: 'pan', big: true }] },
-    { title: 'Annotation', items: [{ grid: ['line', 'arrow', 'rect', 'ellipse', 'cloud', 'polyline', 'polygon', 'ink', 'highlight', 'text', 'callout', 'note'] }] },
+    { title: 'Annotation', items: [{ grid: ['line', 'arrow', 'rect', 'ellipse', 'cloud', 'polyline', 'polygon', 'ink', 'highlight', 'text', 'callout', 'note'] },
+      { big: 'btnImage', icon: 'image', label: 'Image', title: 'Insérer une image (JPG, PNG, WebP, GIF, BMP) — aussi par glisser-déposer ou Ctrl+V' }] },
     { title: 'Mesure', items: [
       { tool: 'calibrate', big: true },
       { col: [{ tool: 'length' }, { tool: 'polylength' }, { tool: 'area' }] },
@@ -1802,7 +1852,8 @@
       if (isDefaults) h += `<label>Hauteur (défaut) <input type="text" data-k="defaultHeight" value="${esc(LP.fmtDim((env.ext && env.ext.defaultHeight) || 3.048, S.unit, false))}" title="Hauteur de montage donnée aux prochains symboles posés"></label>`;
       if (!isDefaults) h += `<label>Opacité <input type="number" data-k="style.opacity" min="0.1" max="1" step="0.1" value="${st.opacity ?? 1}"></label>`;
     } else {
-      h += colorField('Couleur', 'style.stroke', st.stroke || '#d00000');
+      if (!isDefaults) h += hooks.propsHead.map((f) => f(target) || '').join('');
+      h += colorField(types.has('image') && types.size === 1 ? 'Contour' : 'Couleur', 'style.stroke', st.stroke || '#d00000');
       if (anyText) h += colorField('Couleur texte', 'style.textColor', st.textColor || st.stroke || '#d00000');
       if (hasFill) {
         const none = !st.fill || st.fill === 'none';
@@ -1838,6 +1889,7 @@
       if (!allSym) h += `<div class="row"><button data-act="setdef">Définir comme style par défaut</button></div>`;
     }
     box.innerHTML = h;
+    if (!isDefaults) hooks.propsBind.forEach((f) => f(box, target));
 
     // Événements
     box.querySelectorAll('[data-k]').forEach((el) => {
@@ -2541,7 +2593,7 @@
       else if (a.type === 'schedule') { const [x, y, w, h] = LP.bboxAnnotation(a); const c = M([x + w / 2, y + h / 2]); a.pts = [[c[0] - w / 2, c[1] - h / 2]]; }
       else {
         a.pts = a.pts.map(M);
-        if (a.type === 'symbol') a.rot = (((a.rot || 0) + delta) % 360 + 360) % 360;
+        if (a.type === 'symbol' || a.type === 'image') a.rot = (((a.rot || 0) + delta) % 360 + 360) % 360;
         if (a.type === 'room' && a.ceil && delta % 180) a.ceil.rot = a.ceil.rot === 90 ? 0 : 90;
       }
       if (unchanged) a.srcStamp = LP.annotStamp(a); // annotation d'origine du PDF : toujours « non modifiée »
@@ -2618,7 +2670,7 @@
 
   function buildProject(withPdf) {
     const usedImg = {};
-    for (const a of S.annots) if (a.type === 'symbol') for (const id of LP.symImageIds(a.sym)) if (S.images[id]) usedImg[id] = S.images[id];
+    for (const a of S.annots) for (const id of LP.annotImageIds(a)) if (S.images[id]) usedImg[id] = S.images[id];
     const p = {
       format: 'lumiplan-project', version: 1,
       pdf: { name: S.fileName, fingerprint: S.fingerprint, numPages: S.numPages },
@@ -2894,6 +2946,11 @@
       const item = e.dataTransfer.items && e.dataTransfer.items[0];
       const h = item && item.getAsFileSystemHandle ? await item.getAsFileSystemHandle().catch(() => null) : null;
       if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') { S.pdfHandle = h; openPdfFile(f, true); }
+      else if (S.pdf && (/^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name))) {
+        const r = over.getBoundingClientRect();
+        const pt = toPage(e.clientX - r.left, e.clientY - r.top);
+        for (const fn of hooks.pasteImage) if (fn(f, pt)) break;
+      }
       else if (/\.json$/i.test(f.name)) openProjectFile(f, h);
     });
     window.addEventListener('beforeunload', (e) => { if (S.dirty) { autosave(); e.preventDefault(); e.returnValue = ''; } });
@@ -2934,7 +2991,7 @@
   }
 
   /* ======================= Interface interne pour les modules ======================= */
-  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {}, rotate: [] };
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {}, rotate: [], pasteImage: [], propsHead: [], propsBind: [] };
   LP.app = {
     S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
     goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
@@ -2946,7 +3003,7 @@
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
-    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, viewport, rotatePages, rotateAnnots, rerender,
+    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, viewport, rotatePages, rotateAnnots, rerender, loadImageEls: () => loadImageEls(), imgCorners, imgAspect,
     // Point du repère de page sans aucune rotation (ni /Rotate du PDF, ni rotation LumiPlan) → repère affiché
     baseToView(p) { const b = S.page.getViewport({ scale: 1, rotation: 0 }); return S.vp.convertToViewportPoint(...b.convertToPdfPoint(p[0], p[1])); }, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,

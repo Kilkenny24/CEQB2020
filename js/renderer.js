@@ -95,6 +95,7 @@
       this.ctx.textBaseline = 'alphabetic';
       this.ctx.fillText(str, x, y);
     }
+    hasImage(id) { const img = this.images[id]; return !!(img && img.complete && img.naturalWidth); }
     image(id, x, y, w, h) {
       const img = this.images[id];
       if (img && img.complete && img.naturalWidth) this.ctx.drawImage(img, x, y, w, h);
@@ -172,6 +173,7 @@
       );
       this.restore();
     }
+    hasImage(id) { return !!this.res.images[id]; }
     image(id, x, y, w, h) {
       const name = this.res.images[id];
       if (!name) return;

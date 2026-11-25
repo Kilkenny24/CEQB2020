@@ -57,8 +57,7 @@
         },
       };
       for (const a of list) {
-        if (a.type !== 'symbol') continue;
-        for (const id of LP.symImageIds(a.sym)) {
+        for (const id of LP.annotImageIds(a)) {
           if (res.images[id] || !images[id]) continue;
           if (!embedded[id]) {
             const { bytes, png } = dataUrlBytes(images[id]);

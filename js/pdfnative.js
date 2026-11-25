@@ -99,6 +99,7 @@
     e.ic = colorHex(nums(ctx, d.get(N('IC'))));
     e.ca = num(ctx, d.get(N('CA')));
     e.lpdata = txt(ctx, d.get(N('LPData')));
+    e.lpimg = readLPImg(ctx, d.get(N('LPImg')));
     e.state = txt(ctx, d.get(N('State')));
     // Bordure
     const bs = look(ctx, d.get(N('BS')));
@@ -215,12 +216,30 @@
     // Texte / commentaire possiblement modifiés dans un autre logiciel
     if (b.type === 'text' || b.type === 'callout') a.text = contents;
     else if (contents !== lp.auto) a.comment = contents;
-    if (e.color && !['symbol', 'text', 'callout'].includes(b.type)) a.style.stroke = e.color;
+    if (e.color && !['symbol', 'text', 'callout', 'image'].includes(b.type)) a.style.stroke = e.color;
+    if (b.type === 'image' && e.lpimg) a._imgData = e.lpimg;
     return true;
   }
 
   function stamp(a) {
-    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.mode, a.dimL, a.dimW, a.rot, a.showTag, a.sym && a.sym.id, a.markup]);
+    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.mode, a.dimL, a.dimW, a.rot, a.showTag, a.sym && a.sym.id, a.markup, a.img]);
+  }
+  // Fichier image d'origine joint par LumiPlan (/LPImg) → URL de données
+  function readLPImg(ctx, v) {
+    try {
+      const L = window.PDFLib;
+      const st = v ? ctx.lookup(v) : null;
+      if (!st || !st.contents || !st.dict) return null;
+      const f = st.dict.get(L.PDFName.of('Filter'));
+      const filt = f ? String(f) : '';
+      let mime = '';
+      const m = st.dict.get(L.PDFName.of('LPMime'));
+      if (m) mime = m.decodeText ? m.decodeText() : String(m).replace(/^[(/]|\)$/g, '');
+      else if (/DCTDecode/.test(filt)) mime = 'image/jpeg';
+      if (!/^image\/(png|jpeg)$/.test(mime)) return null;
+      if (filt && !/DCTDecode/.test(filt)) return null; // flux recompressé par un autre logiciel : on laisse tomber
+      return `data:${mime};base64,${LP.bytesToBase64(st.contents)}`;
+    } catch (err) { return null; }
   }
 
   // P(x, y) : espace PDF -> espace page affichée
@@ -348,14 +367,16 @@
     const ctx = doc.context;
     const font = await doc.embedFont(L.StandardFonts.Helvetica);
     const fontBold = await doc.embedFont(L.StandardFonts.HelveticaBold);
-    const imgRefs = {};
+    const imgRefs = {}, imgSrc = {};
     for (const a of annots) {
-      if (a.type !== 'symbol') continue;
-      for (const id of LP.symImageIds(a.sym)) {
+      for (const id of LP.annotImageIds(a)) {
         if (imgRefs[id] || !images[id]) continue;
         const [head, b64] = images[id].split(',');
         const bytes = LP.base64ToBytes(b64);
-        imgRefs[id] = (/image\/png/.test(head) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
+        const png = /image\/png/.test(head);
+        imgRefs[id] = (png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
+        // Copie du fichier d'origine pour la réouverture dans LumiPlan (JPEG : l'image du PDF elle-même)
+        if (a.type === 'image') imgSrc[id] = png ? doc.context.register(doc.context.stream(bytes, { LPMime: L.PDFString.of('image/png') })) : imgRefs[id];
       }
     }
     const imported = (nativeInfo && nativeInfo.importedRefs) || new Set();
@@ -383,7 +404,7 @@
       const vp = jsPage.getViewport({ scale: 1, rotation: (jsPage.rotate + extra) % 360 });
       const inv = invert(vp.transform);
       const toPdf = (p) => [inv[0] * p[0] + inv[2] * p[1] + inv[4], inv[1] * p[0] + inv[3] * p[1] + inv[5]];
-      const W = { doc, ctx, page, inv, toPdf, font, fontBold, imgRefs, env };
+      const W = { doc, ctx, page, inv, toPdf, font, fontBold, imgRefs, imgSrc, env };
       for (const a of list) {
         const ref = writeAnnot(W, a);
         keep.push(ref);
@@ -445,7 +466,7 @@
   const SUBTYPE = {
     line: 'Line', arrow: 'Line', length: 'Line', calibrate: 'Line', rect: 'Square', highlight: 'Square', cloud: 'Square',
     ellipse: 'Circle', polyline: 'PolyLine', polylength: 'PolyLine', polygon: 'Polygon', area: 'Polygon', ink: 'Ink',
-    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine', room: 'Polygon', door: 'Stamp',
+    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine', room: 'Polygon', door: 'Stamp', image: 'Stamp',
   };
   // Clés de géométrie / apparence réécrites lorsqu'une annotation importée est modifiée
   const REWRITE = ['AP', 'AS', 'RC', 'DS', 'DA', 'RD', 'L', 'LE', 'Vertices', 'InkList', 'QuadPoints', 'CL', 'IC', 'BE', 'BS', 'Border', 'CA'];
@@ -562,6 +583,10 @@
         break;
       case 'door':
         set('Name', N('LumiPlanPorte'));
+        break;
+      case 'image':
+        set('Name', N('LumiPlanImage'));
+        if (W.imgSrc[a.img]) set('LPImg', W.imgSrc[a.img]);
         break;
       case 'cable':
         set('Vertices', ctx.obj(flat(W, LP.cableGeom(a, W.env).pts)));

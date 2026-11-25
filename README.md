@@ -208,6 +208,22 @@ d'éclairage** (détecteurs, interrupteurs, gradateurs, photocellules, capteurs,
 sont reconnus par la catégorie ou le nom du symbole. Bouton **Hauteurs** : inscrit la hauteur sous chaque luminaire, aussi
 dans le PDF exporté.
 
+## Images (photos, logos, captures)
+
+Bouton **Image** (ruban *Annotation*), **glisser-déposer** un fichier sur le plan, ou **Ctrl+V** d'une capture d'écran.
+Formats : JPG, PNG, WebP, GIF, BMP (plusieurs fichiers à la fois avec le bouton).
+
+- **Redimensionner** : poignées aux 4 coins, proportions gardées (**Maj** pour déformer). Ou saisir *Largeur / Hauteur*
+  dans les propriétés : en pi-po ou mm si la page est calibrée, sinon en pouces sur papier.
+- Rotation par 90°, opacité (calque de référence), contour optionnel, *Remplacer l'image…*, premier plan / arrière-plan.
+  Une nouvelle image se place au-dessus des annotations : *Arrière-plan* pour la passer dessous.
+- Un PDF n'accepte que JPEG et PNG : WebP, GIF, BMP sont **convertis** (photo → JPEG, transparence/dessin → PNG ;
+  un GIF animé devient fixe). L'orientation des photos de téléphone (EXIF) est corrigée.
+- Les images de plus de **2400 px** sont réduites (réglable : 1600, 4000 px ou taille d'origine, dans les propriétés d'une image).
+- Les images sont enregistrées dans le projet et dans le PDF exporté ; un PDF natif rouvert dans LumiPlan les retrouve.
+- **HEIC (iPhone)** : non lisible hors ligne ; réglez l'iPhone sur « Le plus compatible » ou convertissez en JPG.
+- Pas de recadrage pour l'instant.
+
 ## Nouvelle révision (ruban *Révision*)
 
 Avec le PDF de la révision précédente ouvert, **Nouvelle révision** → choisissez le nouveau PDF :
@@ -294,7 +310,7 @@ Elles deviennent des annotations LumiPlan ordinaires : on peut les déplacer, mo
 `V` sélection · `H` main · `S` symbole · `L` ligne · `A` flèche · `R` rectangle · `E` ellipse · `C` nuage · `P` polyligne · `G` polygone ·
 `F` main levée · `I` surligneur · `T` texte · `Q` bulle · `O` note · `K` calibrer · `M` longueur · `N` longueur polyligne · `B` aire ·
 `Entrée`/double-clic = terminer · `Échap` = annuler · `Suppr` · `Ctrl+Z/Y/C/V/D/S/O` · `Ctrl+F` rechercher · `1`…`9` symboles favoris ·
-`W` câble · `U` local · `D` porte · `J` plafond · `[` `]` pivoter les symboles · `Ctrl+Maj+←/→` pivoter la page · flèches = déplacer.
+`W` câble · `U` local · `D` porte · `J` plafond · `[` `]` pivoter les symboles · `Ctrl+Maj+←/→` pivoter la page · `Ctrl+V` coller une capture d'écran comme image · flèches = déplacer.
 
 ## Structure
 

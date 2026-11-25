@@ -559,6 +559,7 @@ dialog h2 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
       <tr><td>W</td><td>Câble (clic sur une composante, puis la suivante)</td></tr>
       <tr><td>U / D / J</td><td>Local / Porte / Grille de plafond</td></tr>
       <tr><td>Ctrl+Maj+→ / ←</td><td>Pivoter la page de 90°</td></tr>
+      <tr><td>Ctrl+V</td><td>Coller une capture d'écran comme image (ou les annotations copiées)</td></tr>
     </table>
     <table>
       <tr><td>S</td><td>Symbole (clic = placer, décompte)</td></tr>
@@ -818,6 +819,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       this.ctx.textBaseline = 'alphabetic';
       this.ctx.fillText(str, x, y);
     }
+    hasImage(id) { const img = this.images[id]; return !!(img && img.complete && img.naturalWidth); }
     image(id, x, y, w, h) {
       const img = this.images[id];
       if (img && img.complete && img.naturalWidth) this.ctx.drawImage(img, x, y, w, h);
@@ -895,6 +897,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
       );
       this.restore();
     }
+    hasImage(id) { return !!this.res.images[id]; }
     image(id, x, y, w, h) {
       const name = this.res.images[id];
       if (!name) return;
@@ -1140,6 +1143,13 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
     return [];
   }
 
+  // Images utilisées par une annotation (symbole ou image insérée)
+  function annotImageIds(a) {
+    if (a.type === 'symbol') return symImageIds(a.sym);
+    if (a.type === 'image' && a.img) return [a.img];
+    return [];
+  }
+
   function shapeOf(sym) { return SHAPES[sym.shape] || SHAPES.circle; }
   function isRound(sym) { return sym.shape === 'custom' ? !!sym.round : !!shapeOf(sym).round; }
 
@@ -1301,7 +1311,7 @@ window.PDFJS_WORKER_SOURCE = "/**\n * @licstart The following is the entire lice
   const CONTROL_RE = /contr[oô]le|d[ée]tect|interrupt|gradat|photocell|capteur|sensor|switch|dimmer/i;
   function isControlSym(sym) { return !!sym && CONTROL_RE.test(`${sym.cat || ''} ${sym.name || ''}`); }
 
-Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
+Object.assign(LP, { isControlSym, drawPrims, symImageIds, annotImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
 })();
 
 </script>
@@ -1413,7 +1423,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble', room: 'Local', door: 'Porte',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble', room: 'Local', door: 'Porte', image: 'Image',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -1628,6 +1638,26 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
         R.beginPath(); R.rectPath(x, y, w, h); R.paint(fill, stroke);
         break;
       }
+      case 'image': {
+        const [x, y, w, h] = norm(pts[0], pts[1]);
+        const rot = (((a.rot || 0) % 360) + 360) % 360;
+        if (R.hasImage && R.hasImage(a.img)) {
+          const r = (rot * Math.PI) / 180, c = Math.round(Math.cos(r)), sn = Math.round(Math.sin(r));
+          const iw = rot % 180 ? h : w, ih = rot % 180 ? w : h; // taille de l'image avant rotation
+          R.save();
+          R.transform(c, sn, -sn, c, x + w / 2, y + h / 2);
+          R.image(a.img, -iw / 2, -ih / 2, iw, ih);
+          R.restore();
+        } else {
+          // Image absente (projet incomplet) : cadre de repère
+          R.save(); R.setAlpha(1); R.setStroke('#9aa3ad'); R.setLineWidth(Math.max(0.5, Math.min(w, h) / 200)); R.setDash([]);
+          R.beginPath(); R.rectPath(x, y, w, h); R.moveTo(x, y); R.lineTo(x + w, y + h); R.moveTo(x + w, y); R.lineTo(x, y + h); R.stroke();
+          R.restore();
+          drawLabel(R, 'Image manquante', x + w / 2, y + h / 2, Math.max(5, Math.min(12, w / 12)), '#5b6470');
+        }
+        if (stroke && s.stroke && s.stroke !== 'none') { R.beginPath(); R.rectPath(x, y, w, h); R.paint(null, true); }
+        break;
+      }
       case 'ellipse': {
         const [x, y, w, h] = norm(pts[0], pts[1]);
         R.beginPath(); R.ellipsePath(x + w / 2, y + h / 2, w / 2, h / 2); R.paint(fill, stroke);
@@ -1787,6 +1817,10 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
         const v = Math.hypot((x - cx) / (rx || 1), (y - cy) / (ry || 1));
         if (filled) return v <= 1 + tol / Math.max(rx, ry, 1);
         return Math.abs(v - 1) * Math.min(rx, ry) <= tol + 1;
+      }
+      case 'image': {
+        const [bx, by, w, h] = norm(p[0], p[1]);
+        return x >= bx - tol && x <= bx + w + tol && y >= by - tol && y <= by + h + tol;
       }
       case 'text': case 'callout': case 'rect': case 'highlight': case 'cloud': {
         const box = a.type === 'callout' ? [p[1], p[2]] : [p[0], p[1]];
@@ -2161,6 +2195,11 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       case 'door': return `${LP.fmtDim(a.w != null ? a.w : 3 * FT, (env && env.unit ? env.unit() : 'ft'), false)}, ${a.swing === 'out' ? 'vers l\'extérieur' : 'vers l\'intérieur'}`;
       case 'cable': return LP.env && LP.env.ext && LP.env.ext.cableLabel ? LP.env.ext.cableLabel(a, true) : String(a.ctype || '');
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
+      case 'image': {
+        const [, , w, h] = norm(a.pts[0], a.pts[1]);
+        const sz = sc ? `${LP.fmtDim(w * sc.mpp, sc.unit, false)} × ${LP.fmtDim(h * sc.mpp, sc.unit, false)}` : `${Math.round(w)} × ${Math.round(h)} pt`;
+        return `${a.name || 'Image'} — ${sz}`;
+      }
     }
     return a.comment || '';
   }
@@ -2354,8 +2393,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
         },
       };
       for (const a of list) {
-        if (a.type !== 'symbol') continue;
-        for (const id of LP.symImageIds(a.sym)) {
+        for (const id of LP.annotImageIds(a)) {
           if (res.images[id] || !images[id]) continue;
           if (!embedded[id]) {
             const { bytes, png } = dataUrlBytes(images[id]);
@@ -2490,6 +2528,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     e.ic = colorHex(nums(ctx, d.get(N('IC'))));
     e.ca = num(ctx, d.get(N('CA')));
     e.lpdata = txt(ctx, d.get(N('LPData')));
+    e.lpimg = readLPImg(ctx, d.get(N('LPImg')));
     e.state = txt(ctx, d.get(N('State')));
     // Bordure
     const bs = look(ctx, d.get(N('BS')));
@@ -2606,12 +2645,30 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     // Texte / commentaire possiblement modifiés dans un autre logiciel
     if (b.type === 'text' || b.type === 'callout') a.text = contents;
     else if (contents !== lp.auto) a.comment = contents;
-    if (e.color && !['symbol', 'text', 'callout'].includes(b.type)) a.style.stroke = e.color;
+    if (e.color && !['symbol', 'text', 'callout', 'image'].includes(b.type)) a.style.stroke = e.color;
+    if (b.type === 'image' && e.lpimg) a._imgData = e.lpimg;
     return true;
   }
 
   function stamp(a) {
-    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.mode, a.dimL, a.dimW, a.rot, a.showTag, a.sym && a.sym.id, a.markup]);
+    return JSON.stringify([a.type, a.pts, a.breaks, a.style, a.text, a.comment, a.tag, a.size, a.mode, a.dimL, a.dimW, a.rot, a.showTag, a.sym && a.sym.id, a.markup, a.img]);
+  }
+  // Fichier image d'origine joint par LumiPlan (/LPImg) → URL de données
+  function readLPImg(ctx, v) {
+    try {
+      const L = window.PDFLib;
+      const st = v ? ctx.lookup(v) : null;
+      if (!st || !st.contents || !st.dict) return null;
+      const f = st.dict.get(L.PDFName.of('Filter'));
+      const filt = f ? String(f) : '';
+      let mime = '';
+      const m = st.dict.get(L.PDFName.of('LPMime'));
+      if (m) mime = m.decodeText ? m.decodeText() : String(m).replace(/^[(/]|\)$/g, '');
+      else if (/DCTDecode/.test(filt)) mime = 'image/jpeg';
+      if (!/^image\/(png|jpeg)$/.test(mime)) return null;
+      if (filt && !/DCTDecode/.test(filt)) return null; // flux recompressé par un autre logiciel : on laisse tomber
+      return `data:${mime};base64,${LP.bytesToBase64(st.contents)}`;
+    } catch (err) { return null; }
   }
 
   // P(x, y) : espace PDF -> espace page affichée
@@ -2739,14 +2796,16 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     const ctx = doc.context;
     const font = await doc.embedFont(L.StandardFonts.Helvetica);
     const fontBold = await doc.embedFont(L.StandardFonts.HelveticaBold);
-    const imgRefs = {};
+    const imgRefs = {}, imgSrc = {};
     for (const a of annots) {
-      if (a.type !== 'symbol') continue;
-      for (const id of LP.symImageIds(a.sym)) {
+      for (const id of LP.annotImageIds(a)) {
         if (imgRefs[id] || !images[id]) continue;
         const [head, b64] = images[id].split(',');
         const bytes = LP.base64ToBytes(b64);
-        imgRefs[id] = (/image\/png/.test(head) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
+        const png = /image\/png/.test(head);
+        imgRefs[id] = (png ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)).ref;
+        // Copie du fichier d'origine pour la réouverture dans LumiPlan (JPEG : l'image du PDF elle-même)
+        if (a.type === 'image') imgSrc[id] = png ? doc.context.register(doc.context.stream(bytes, { LPMime: L.PDFString.of('image/png') })) : imgRefs[id];
       }
     }
     const imported = (nativeInfo && nativeInfo.importedRefs) || new Set();
@@ -2774,7 +2833,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       const vp = jsPage.getViewport({ scale: 1, rotation: (jsPage.rotate + extra) % 360 });
       const inv = invert(vp.transform);
       const toPdf = (p) => [inv[0] * p[0] + inv[2] * p[1] + inv[4], inv[1] * p[0] + inv[3] * p[1] + inv[5]];
-      const W = { doc, ctx, page, inv, toPdf, font, fontBold, imgRefs, env };
+      const W = { doc, ctx, page, inv, toPdf, font, fontBold, imgRefs, imgSrc, env };
       for (const a of list) {
         const ref = writeAnnot(W, a);
         keep.push(ref);
@@ -2836,7 +2895,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
   const SUBTYPE = {
     line: 'Line', arrow: 'Line', length: 'Line', calibrate: 'Line', rect: 'Square', highlight: 'Square', cloud: 'Square',
     ellipse: 'Circle', polyline: 'PolyLine', polylength: 'PolyLine', polygon: 'Polygon', area: 'Polygon', ink: 'Ink',
-    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine', room: 'Polygon', door: 'Stamp',
+    text: 'FreeText', callout: 'FreeText', note: 'Text', symbol: 'Stamp', schedule: 'Stamp', cable: 'PolyLine', room: 'Polygon', door: 'Stamp', image: 'Stamp',
   };
   // Clés de géométrie / apparence réécrites lorsqu'une annotation importée est modifiée
   const REWRITE = ['AP', 'AS', 'RC', 'DS', 'DA', 'RD', 'L', 'LE', 'Vertices', 'InkList', 'QuadPoints', 'CL', 'IC', 'BE', 'BS', 'Border', 'CA'];
@@ -2954,6 +3013,10 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       case 'door':
         set('Name', N('LumiPlanPorte'));
         break;
+      case 'image':
+        set('Name', N('LumiPlanImage'));
+        if (W.imgSrc[a.img]) set('LPImg', W.imgSrc[a.img]);
+        break;
       case 'cable':
         set('Vertices', ctx.obj(flat(W, LP.cableGeom(a, W.env).pts)));
         set('BS', ctx.obj(bs));
@@ -3050,6 +3113,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     calibrate: { stroke: '#ff7a00', width: 1, opacity: 1, dash: 'dash', fontSize: 9 },
     note: { stroke: '#ffd400', width: 1, opacity: 1, dash: 'solid' },
     markup: { stroke: '#ffeb3b', width: 1, opacity: 0.4, dash: 'solid' },
+    image: { stroke: '#333333', fill: 'none', width: 0, opacity: 1, dash: 'solid' },
   };
   let defaults = JSON.parse(JSON.stringify(DEFAULT_STYLE));
   const symDefaults = { rot: 0, showTag: true };
@@ -3222,9 +3286,14 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       const vp = page.getViewport({ scale: 1 });
       const P = (x, y) => vp.convertToViewportPoint(x, y);
       for (const e of entries) {
-        try { const a = LP.nativeToModel(e, pageNum, P); if (a) out.push(a); } catch (err) { console.warn('Annotation ignorée', e, err); }
+        try {
+          const a = LP.nativeToModel(e, pageNum, P);
+          if (a && a._imgData) { if (a.img && !S.images[a.img]) S.images[a.img] = a._imgData; delete a._imgData; }
+          if (a) out.push(a);
+        } catch (err) { console.warn('Annotation ignorée', e, err); }
       }
     }
+    loadImageEls();
     return out;
   }
   LP.annotsDiffer = (x, y) => JSON.stringify(x.map(LP.annotStamp)) !== JSON.stringify(y.map(LP.annotStamp));
@@ -3439,7 +3508,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       octx.strokeRect(x - m, y - m, w + 2 * m, h + 2 * m);
       octx.setLineDash([]);
       if (S.sel.size === 1 && !['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) {
-        for (const p of a.pts) {
+        for (const p of a.type === 'image' ? imgCorners(a) : a.pts) {
           octx.fillStyle = '#fff'; octx.strokeStyle = '#1f6feb';
           octx.fillRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
           octx.strokeRect(p[0] - hr, p[1] - hr, 2 * hr, 2 * hr);
@@ -3615,6 +3684,11 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     const a = S.annots.find((q) => S.sel.has(q.id));
     if (!a || a.page !== S.pageNum || ['symbol', 'ink', 'note', 'markup', 'cable', 'schedule', 'door'].includes(a.type)) return null;
     const r = 6 / S.zoom;
+    if (a.type === 'image') {
+      const c = imgCorners(a);
+      for (let i = 0; i < 4; i++) if (Math.abs(c[i][0] - x) <= r && Math.abs(c[i][1] - y) <= r) return { a, i, img: c[(i + 2) % 4] };
+      return null;
+    }
     for (let i = 0; i < a.pts.length; i++) if (Math.abs(a.pts[i][0] - x) <= r && Math.abs(a.pts[i][1] - y) <= r) return { a, i };
     return null;
   }
@@ -3650,7 +3724,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     if (hooks.tool[tool]) { hooks.tool[tool].down(p, e); return; }
     if (tool === 'select') {
       const h = handleHit(...p);
-      if (h) { drag = { kind: 'handle', a: h.a, i: h.i, snap: snapshot(), moved: false }; return; }
+      if (h) { drag = { kind: 'handle', a: h.a, i: h.i, opp: h.img, snap: snapshot(), moved: false }; return; }
       const a = topHit(...p);
       if (a) {
         if (e.shiftKey || e.ctrlKey) {
@@ -3752,6 +3826,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       case 'handle': {
         drag.moved = true;
         let q = p;
+        if (drag.opp) { resizeImage(drag.a, drag.opp, p, e.shiftKey); drawOverlay(); break; }
         if (e.shiftKey && drag.a.pts.length === 2) q = constrain(drag.a.pts[1 - drag.i], p, drag.a.type);
         drag.a.pts[drag.i] = q;
         drawOverlay();
@@ -4011,8 +4086,8 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { e.preventDefault(); rotatePages([S.pageNum], e.key === 'ArrowRight' ? 90 : -90); return; }
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
-      else if (k === 'c') copySel();
-      else if (k === 'v') paste();
+      else if (k === 'c') { copySel(); copiedAt = Date.now(); }
+      else if (k === 'v') { clearTimeout(pasteTimer); pasteTimer = setTimeout(paste, 120); }
       else if (k === 'd') { e.preventDefault(); copySel(); paste(); }
       else if (k === 'a') { e.preventDefault(); S.annots.forEach((a) => a.page === S.pageNum && S.sel.add(a.id)); refreshProps(); drawOverlay(); }
       return;
@@ -4311,6 +4386,26 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     return out.filter((c) => c.type !== 'door' || c.room);
   }
 
+  /* ---- Images : coins et redimensionnement ---- */
+  function imgCorners(a) {
+    const [p, q] = a.pts;
+    const x0 = Math.min(p[0], q[0]), y0 = Math.min(p[1], q[1]), x1 = Math.max(p[0], q[0]), y1 = Math.max(p[1], q[1]);
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  }
+  // Proportions affichées (largeur / hauteur) compte tenu de la rotation de l'image
+  function imgAspect(a) { const r = a.aspect || 1; return (a.rot || 0) % 180 ? 1 / r : r; }
+  // Coin opposé fixe ; proportions gardées sauf avec Maj (ou si l'option est décochée)
+  function resizeImage(a, o, p, shift) {
+    let dx = p[0] - o[0], dy = p[1] - o[1];
+    const min = 4;
+    let w = Math.max(Math.abs(dx), min), h = Math.max(Math.abs(dy), min);
+    if (a.keepAspect !== false && !shift) {
+      const ar = imgAspect(a);
+      if (w / h > ar) h = w / ar; else w = h * ar;
+    }
+    a.pts = [[o[0], o[1]], [o[0] + (dx < 0 ? -w : w), o[1] + (dy < 0 ? -h : h)]];
+  }
+
   function copySel() {
     S.clipboard = S.annots.filter((a) => S.sel.has(a.id)).map((a) => JSON.parse(JSON.stringify(a)));
     if (S.clipboard.length) toast(`${S.clipboard.length} annotation(s) copiée(s)`);
@@ -4331,6 +4426,23 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
     S.clipboard.forEach((c) => { c.pts.forEach((q) => { q[0] += off; q[1] += off; }); c.page = S.pageNum; });
     changed(); refreshProps();
   }
+
+  let pasteTimer = 0, copiedAt = 0;
+  const isTyping = () => { const t = (document.activeElement && document.activeElement.tagName || '').toLowerCase(); return t === 'input' || t === 'textarea' || t === 'select' || !!editing; };
+  // Copie d'annotations : on remplace le contenu du presse-papiers système pour qu'une ancienne capture ne soit pas recollée
+  document.addEventListener('copy', (e) => {
+    if (isTyping() || Date.now() - copiedAt > 500 || !S.sel.size) return;
+    e.clipboardData.setData('text/plain', `LumiPlan : ${S.sel.size} annotation(s)`);
+    e.preventDefault();
+  });
+  document.addEventListener('paste', (e) => {
+    if (isTyping() || !S.pdf) return;
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => /^image\//.test(f.type));
+    if (!files.length) return; // collage normal des annotations (minuterie)
+    clearTimeout(pasteTimer);
+    e.preventDefault();
+    for (const f of hooks.pasteImage) if (f(files[0], hover)) return;
+  });
 
   function updateCursor(p) {
     if (spaceDown || S.tool === 'pan') { over.style.cursor = 'grab'; return; }
@@ -4375,7 +4487,8 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       ] },
     ] },
     { title: 'Sélection', items: [{ tool: 'select', big: true }, { tool: 'pan', big: true }] },
-    { title: 'Annotation', items: [{ grid: ['line', 'arrow', 'rect', 'ellipse', 'cloud', 'polyline', 'polygon', 'ink', 'highlight', 'text', 'callout', 'note'] }] },
+    { title: 'Annotation', items: [{ grid: ['line', 'arrow', 'rect', 'ellipse', 'cloud', 'polyline', 'polygon', 'ink', 'highlight', 'text', 'callout', 'note'] },
+      { big: 'btnImage', icon: 'image', label: 'Image', title: 'Insérer une image (JPG, PNG, WebP, GIF, BMP) — aussi par glisser-déposer ou Ctrl+V' }] },
     { title: 'Mesure', items: [
       { tool: 'calibrate', big: true },
       { col: [{ tool: 'length' }, { tool: 'polylength' }, { tool: 'area' }] },
@@ -4810,7 +4923,8 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       if (isDefaults) h += `<label>Hauteur (défaut) <input type="text" data-k="defaultHeight" value="${esc(LP.fmtDim((env.ext && env.ext.defaultHeight) || 3.048, S.unit, false))}" title="Hauteur de montage donnée aux prochains symboles posés"></label>`;
       if (!isDefaults) h += `<label>Opacité <input type="number" data-k="style.opacity" min="0.1" max="1" step="0.1" value="${st.opacity ?? 1}"></label>`;
     } else {
-      h += colorField('Couleur', 'style.stroke', st.stroke || '#d00000');
+      if (!isDefaults) h += hooks.propsHead.map((f) => f(target) || '').join('');
+      h += colorField(types.has('image') && types.size === 1 ? 'Contour' : 'Couleur', 'style.stroke', st.stroke || '#d00000');
       if (anyText) h += colorField('Couleur texte', 'style.textColor', st.textColor || st.stroke || '#d00000');
       if (hasFill) {
         const none = !st.fill || st.fill === 'none';
@@ -4846,6 +4960,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       if (!allSym) h += `<div class="row"><button data-act="setdef">Définir comme style par défaut</button></div>`;
     }
     box.innerHTML = h;
+    if (!isDefaults) hooks.propsBind.forEach((f) => f(box, target));
 
     // Événements
     box.querySelectorAll('[data-k]').forEach((el) => {
@@ -5549,7 +5664,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       else if (a.type === 'schedule') { const [x, y, w, h] = LP.bboxAnnotation(a); const c = M([x + w / 2, y + h / 2]); a.pts = [[c[0] - w / 2, c[1] - h / 2]]; }
       else {
         a.pts = a.pts.map(M);
-        if (a.type === 'symbol') a.rot = (((a.rot || 0) + delta) % 360 + 360) % 360;
+        if (a.type === 'symbol' || a.type === 'image') a.rot = (((a.rot || 0) + delta) % 360 + 360) % 360;
         if (a.type === 'room' && a.ceil && delta % 180) a.ceil.rot = a.ceil.rot === 90 ? 0 : 90;
       }
       if (unchanged) a.srcStamp = LP.annotStamp(a); // annotation d'origine du PDF : toujours « non modifiée »
@@ -5626,7 +5741,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
 
   function buildProject(withPdf) {
     const usedImg = {};
-    for (const a of S.annots) if (a.type === 'symbol') for (const id of LP.symImageIds(a.sym)) if (S.images[id]) usedImg[id] = S.images[id];
+    for (const a of S.annots) for (const id of LP.annotImageIds(a)) if (S.images[id]) usedImg[id] = S.images[id];
     const p = {
       format: 'lumiplan-project', version: 1,
       pdf: { name: S.fileName, fingerprint: S.fingerprint, numPages: S.numPages },
@@ -5902,6 +6017,11 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       const item = e.dataTransfer.items && e.dataTransfer.items[0];
       const h = item && item.getAsFileSystemHandle ? await item.getAsFileSystemHandle().catch(() => null) : null;
       if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') { S.pdfHandle = h; openPdfFile(f, true); }
+      else if (S.pdf && (/^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name))) {
+        const r = over.getBoundingClientRect();
+        const pt = toPage(e.clientX - r.left, e.clientY - r.top);
+        for (const fn of hooks.pasteImage) if (fn(f, pt)) break;
+      }
       else if (/\.json$/i.test(f.name)) openProjectFile(f, h);
     });
     window.addEventListener('beforeunload', (e) => { if (S.dirty) { autosave(); e.preventDefault(); e.returnValue = ''; } });
@@ -5942,7 +6062,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
   }
 
   /* ======================= Interface interne pour les modules ======================= */
-  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {}, rotate: [] };
+  const hooks = { overlay: [], open: [], page: [], key: [], save: [], load: [], props: [], panels: [], csv: [], tool: {}, propsExtra: [], toolProps: {}, rotate: [], pasteImage: [], propsHead: [], propsBind: [] };
   LP.app = {
     S, env, hooks, $, $$, esc, toast, drawOverlay, drawBase, changed, pushUndo, refreshProps, refreshPanels,
     goPage, setTool, cloneAnnot, openPdfBytes, updateScaleUI, fmtDate, runAction,
@@ -5954,7 +6074,7 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
       updateZoomLabel(); viewChanged();
     },
     addAnnots(list) { pushUndo(); S.annots.push(...list); changed(); refreshPanels(); },
-    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, viewport, rotatePages, rotateAnnots, rerender,
+    topHit: (x, y) => topHit(x, y), cloneGroup, insertLayer, viewport, rotatePages, rotateAnnots, rerender, loadImageEls: () => loadImageEls(), imgCorners, imgAspect,
     // Point du repère de page sans aucune rotation (ni /Rotate du PDF, ni rotation LumiPlan) → repère affiché
     baseToView(p) { const b = S.page.getViewport({ scale: 1, rotation: 0 }); return S.vp.convertToViewportPoint(...b.convertToPdfPoint(p[0], p[1])); }, setStatusHint: (t) => { $('#statusTool').textContent = t; },
     newAnnot,
@@ -7848,6 +7968,250 @@ Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAU
   `;
   document.head.appendChild(css);
   LP.space = { CFG, GRID, createSheet, snap };
+})();
+
+</script>
+<script>/* js/image.js */
+/*
+ * Images insérées sur le plan (photos, logos, captures, détails scannés).
+ * Formats : JPG, PNG, WebP, GIF, BMP. Un PDF n'accepte que JPEG et PNG : les autres
+ * formats sont convertis à l'import. Les grandes images sont réduites (réglable).
+ */
+(function () {
+  'use strict';
+  const LP = window.LP;
+  const app = LP.app;
+  const { S, env, $, esc, hooks } = app;
+
+  const MAX_OPTIONS = [[1600, '1600 px'], [2400, '2400 px (recommandé)'], [4000, '4000 px'], [0, 'Taille d\'origine']];
+  const CFG = { max: 2400 };
+  try { const v = localStorage.getItem('lumiplan-img-max'); if (v != null && MAX_OPTIONS.some((o) => o[0] === +v)) CFG.max = +v; } catch (e) { /* stockage indisponible */ }
+
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif';
+  input.multiple = true;
+  input.hidden = true;
+  document.body.appendChild(input);
+
+  /* ---------------- Lecture et conversion ---------------- */
+  function hash(str) { // FNV-1a : même image collée deux fois = même entrée, pas de doublon dans le projet
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(36) + str.length.toString(36);
+  }
+  const readDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+
+  // Orientation EXIF d'un JPEG (1 = normale). Le navigateur l'applique à l'affichage, pas le PDF : on réencode si ≠ 1.
+  function jpegOrientation(buf) {
+    const v = new DataView(buf);
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return 1;
+    let o = 2;
+    while (o + 4 < v.byteLength) {
+      const mk = v.getUint16(o), len = v.getUint16(o + 2);
+      if (mk === 0xffe1 && v.getUint32(o + 4) === 0x45786966) {
+        const t = o + 10, le = v.getUint16(t) === 0x4949;
+        const ifd = t + v.getUint32(t + 4, le);
+        const n = v.getUint16(ifd, le);
+        for (let i = 0; i < n; i++) {
+          const e = ifd + 2 + i * 12;
+          if (e + 10 > v.byteLength) break;
+          if (v.getUint16(e, le) === 0x0112) return v.getUint16(e + 8, le);
+        }
+        return 1;
+      }
+      if ((mk & 0xff00) !== 0xff00 || mk === 0xffda) break;
+      o += 2 + len;
+    }
+    return 1;
+  }
+
+  async function ingest(file) {
+    const name = file.name || 'Image collée';
+    if (/\.(heic|heif)$/i.test(name) || /hei[cf]/i.test(file.type)) {
+      throw new Error("Les photos HEIC (iPhone) ne sont pas lisibles hors ligne. Convertissez-les en JPG (Réglages › Appareil photo › Formats › « Le plus compatible »), ou faites une capture d'écran.");
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.src = url;
+    try { await img.decode(); } catch (e) { URL.revokeObjectURL(url); throw new Error(`Format d'image non reconnu : ${name}`); }
+    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    const isJpeg = /jpe?g/i.test(file.type) || /\.jpe?g$/i.test(name);
+    const isPng = /png/i.test(file.type) || /\.png$/i.test(name);
+    const k = CFG.max && Math.max(w0, h0) > CFG.max ? CFG.max / Math.max(w0, h0) : 1;
+    let dataUrl = null, w = w0, h = h0, converted = false;
+    if (k === 1 && isPng) dataUrl = await readDataURL(file);
+    if (k === 1 && isJpeg && jpegOrientation(await file.arrayBuffer()) === 1) dataUrl = await readDataURL(file);
+    if (dataUrl) dataUrl = dataUrl.replace(/^data:[^;,]*/, isPng ? 'data:image/png' : 'data:image/jpeg');
+    else {
+      // Réduction, conversion (WebP, GIF, BMP) ou correction d'orientation : passage par un canevas
+      w = Math.max(1, Math.round(w0 * k)); h = Math.max(1, Math.round(h0 * k));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(img, 0, 0, w, h);
+      let alpha = false;
+      if (!isJpeg) {
+        const d = g.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < d.length; i += 4) if (d[i] < 255) { alpha = true; break; }
+      }
+      // Photos → JPEG ; transparence, dessins et captures (PNG, GIF, BMP) → PNG
+      const asPng = alpha || isPng || /gif|bmp/i.test(file.type) || /\.(gif|bmp)$/i.test(name);
+      if (!asPng) { const c2 = document.createElement('canvas'); c2.width = w; c2.height = h; const g2 = c2.getContext('2d'); g2.fillStyle = '#fff'; g2.fillRect(0, 0, w, h); g2.drawImage(c, 0, 0); dataUrl = c2.toDataURL('image/jpeg', 0.88); }
+      else dataUrl = c.toDataURL('image/png');
+      converted = true;
+    }
+    URL.revokeObjectURL(url);
+    const id = 'img-' + hash(dataUrl);
+    S.images[id] = dataUrl;
+    app.loadImageEls();
+    return { id, w, h, w0, h0, name: name.replace(/\.[a-z0-9]+$/i, ''), converted, bytes: Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75) };
+  }
+
+  /* ---------------- Pose sur le plan ---------------- */
+  function viewCenter() {
+    const v = app.view();
+    return app.toPage(v.w / 2, v.h / 2);
+  }
+  function place(info, at, offset) {
+    const v = app.view();
+    // Taille initiale : environ 35 % de la zone visible, sans dépasser la page
+    const maxW = Math.min((v.w * 0.35) / S.zoom, S.vp.width * 0.8), maxH = Math.min((v.h * 0.35) / S.zoom, S.vp.height * 0.8);
+    const k = Math.min(maxW / info.w, maxH / info.h);
+    const w = info.w * k, h = info.h * k;
+    let [cx, cy] = at || viewCenter();
+    cx += offset || 0; cy += offset || 0;
+    cx = Math.min(Math.max(cx, w / 2), S.vp.width - w / 2);
+    cy = Math.min(Math.max(cy, h / 2), S.vp.height - h / 2);
+    const a = app.newAnnot('image', [[cx - w / 2, cy - h / 2], [cx + w / 2, cy + h / 2]]);
+    a.img = info.id;
+    a.aspect = info.w / info.h;
+    a.rot = 0;
+    a.keepAspect = true;
+    a.name = info.name;
+    a.px = [info.w, info.h];
+    if (info.w !== info.w0) a.pxSrc = [info.w0, info.h0];
+    S.annots.push(a);
+    return a;
+  }
+  async function insertFiles(files, at) {
+    if (!S.pdf) { app.toast("Ouvrez d'abord un PDF"); return; }
+    files = [...files];
+    const added = [], errs = [];
+    let reduced = 0;
+    for (const f of files) {
+      try {
+        const info = await ingest(f);
+        if (!added.length) app.pushUndo();
+        added.push(place(info, at, added.length * 18));
+        if (info.converted && info.w < info.w0) reduced++;
+      } catch (e) { errs.push(e.message); }
+    }
+    if (errs.length) alert(errs.join('\n\n'));
+    if (!added.length) return;
+    app.setTool('select');
+    S.sel = new Set(added.map((a) => a.id));
+    app.changed();
+    app.refreshProps();
+    app.toast(`${added.length} image(s) insérée(s)${reduced ? ` · ${reduced} réduite(s) à ${CFG.max} px` : ''} — glissez les coins pour redimensionner (Maj : déformer)`, 7000);
+  }
+
+  $('#btnImage').addEventListener('click', () => {
+    if (!S.pdf) { app.toast("Ouvrez d'abord un PDF"); return; }
+    input.value = '';
+    input.click();
+  });
+  let pick = null; // remplacement d'une image : le fichier choisi est rendu à l'appelant
+  input.addEventListener('change', () => {
+    if (pick) { const p = pick; pick = null; p(input.files[0]); return; }
+    if (input.files.length) insertFiles(input.files, null);
+  });
+  hooks.pasteImage.push((file, at) => { insertFiles([file], at); return true; });
+
+  /* ---------------- Propriétés ---------------- */
+  const fmt = (pt, sc) => (sc ? LP.fmtDim(pt * sc.mpp, sc.unit, false) : `${(pt / 72).toFixed(2)} po papier`);
+  const kb = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} Mo` : `${Math.max(1, Math.round(n / 1024))} ko`);
+  function boxOf(a) { const c = app.imgCorners(a); return { x: c[0][0], y: c[0][1], w: c[2][0] - c[0][0], h: c[2][1] - c[0][1] }; }
+
+  hooks.propsHead.push((target) => {
+    if (!target.length || !target.every((a) => a.type === 'image')) return '';
+    const a = target[0], one = target.length === 1;
+    const sc = env.scaleFor(a.page);
+    const b = boxOf(a);
+    const url = S.images[a.img];
+    let h = '';
+    if (one) {
+      h += `<label>Nom <input type="text" data-img="name" value="${esc(a.name || '')}"></label>
+        <label>Largeur <input type="text" data-img="w" value="${esc(fmt(b.w, sc))}" title="${sc ? 'Dimension réelle selon l\'échelle de la page' : 'Page non calibrée : taille sur papier en pouces'}"></label>
+        <label>Hauteur <input type="text" data-img="h" value="${esc(fmt(b.h, sc))}"></label>`;
+    }
+    h += `<label class="inline"><input type="checkbox" data-img="keepAspect" ${a.keepAspect !== false ? 'checked' : ''}> Garder les proportions</label>
+      <div class="row"><button data-img-act="rotl" title="Pivoter l'image de 90° vers la gauche">${LP.icon('rotl')}90°</button><button data-img-act="rotr" title="Pivoter l'image de 90° vers la droite">${LP.icon('rotr')}90°</button><button data-img-act="ratio" title="Rétablir les proportions d'origine (largeur conservée)">Proportions</button></div>`;
+    if (one) {
+      h += `<div class="row"><button data-img-act="replace">Remplacer l'image…</button></div>
+        <p class="hint">${url ? `${a.px ? `${a.px[0]} × ${a.px[1]} px` : ''}${a.pxSrc ? ` (réduite de ${a.pxSrc[0]} × ${a.pxSrc[1]})` : ''} · ${/image\/png/.test(url) ? 'PNG' : 'JPEG'} · ${kb((url.length - url.indexOf(',')) * 0.75)}`
+          : '<b style="color:#c25e00">Image absente de ce projet</b> : utilisez « Remplacer l\'image… ».'}
+        ${sc ? '' : '<br>Page non calibrée : tailles en pouces sur papier.'}<br>Coins : redimensionner (Maj = déformer). Opacité &lt; 1 pour un calque de référence.</p>`;
+    }
+    h += `<label>Taille max. des prochaines images <select data-img="max">${MAX_OPTIONS.map(([v, l]) => `<option value="${v}" ${CFG.max === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+    return h;
+  });
+
+  hooks.propsBind.push((box, target) => {
+    if (!target.length || !target.every((a) => a.type === 'image')) return;
+    const done = () => { app.changed(); app.refreshProps(); };
+    box.querySelectorAll('[data-img]').forEach((el) => el.addEventListener('change', () => {
+      const k = el.dataset.img;
+      if (k === 'max') { CFG.max = +el.value; try { localStorage.setItem('lumiplan-img-max', String(CFG.max)); } catch (e) { /* ignoré */ } return; }
+      if (k === 'name') { app.pushUndo(); target[0].name = el.value; return done(); }
+      if (k === 'keepAspect') { app.pushUndo(); target.forEach((a) => { a.keepAspect = el.checked; }); return done(); }
+      if (k === 'w' || k === 'h') {
+        const a = target[0], sc = env.scaleFor(a.page);
+        let pt;
+        if (sc) { const m = LP.parseDim(el.value, S.unit, false); pt = m > 0 ? m / sc.mpp : NaN; }
+        else { const v = parseFloat(String(el.value).replace(',', '.')); pt = v > 0 ? v * 72 : NaN; }
+        if (!(pt > 0)) { alert(`Dimension non reconnue : « ${el.value} »`); return app.refreshProps(); }
+        app.pushUndo();
+        const b = boxOf(a), ar = app.imgAspect(a);
+        let w = b.w, h = b.h;
+        if (k === 'w') { w = pt; if (a.keepAspect !== false) h = w / ar; } else { h = pt; if (a.keepAspect !== false) w = h * ar; }
+        a.pts = [[b.x, b.y], [b.x + w, b.y + h]]; // coin haut-gauche fixe
+        return done();
+      }
+    }));
+    box.querySelectorAll('[data-img-act]').forEach((el) => el.addEventListener('click', async () => {
+      const act = el.dataset.imgAct;
+      if (act === 'replace') {
+        input.value = '';
+        input.multiple = false;
+        const f = await new Promise((res) => { pick = res; input.click(); });
+        input.multiple = true;
+        if (!f) return;
+        try {
+          const info = await ingest(f);
+          app.pushUndo();
+          const a = target[0], b = boxOf(a);
+          a.img = info.id; a.aspect = info.w / info.h; a.name = info.name; a.px = [info.w, info.h]; delete a.pxSrc;
+          if (info.w !== info.w0) a.pxSrc = [info.w0, info.h0];
+          const ar = app.imgAspect(a);
+          a.pts = [[b.x, b.y], [b.x + b.w, b.y + b.w / ar]];
+          done();
+        } catch (e) { alert(e.message); }
+        return;
+      }
+      app.pushUndo();
+      for (const a of target) {
+        const b = boxOf(a), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        if (act === 'ratio') { const h = b.w / app.imgAspect(a); a.pts = [[b.x, cy - h / 2], [b.x + b.w, cy + h / 2]]; continue; }
+        a.rot = ((((a.rot || 0) + (act === 'rotr' ? 90 : -90)) % 360) + 360) % 360;
+        a.pts = [[cx - b.h / 2, cy - b.w / 2], [cx + b.h / 2, cy + b.w / 2]]; // la boîte pivote autour de son centre
+      }
+      done();
+    }));
+  });
+
+  LP.images = { ingest, insertFiles, CFG };
 })();
 
 </script>

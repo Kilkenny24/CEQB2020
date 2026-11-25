@@ -226,6 +226,13 @@
     return [];
   }
 
+  // Images utilisées par une annotation (symbole ou image insérée)
+  function annotImageIds(a) {
+    if (a.type === 'symbol') return symImageIds(a.sym);
+    if (a.type === 'image' && a.img) return [a.img];
+    return [];
+  }
+
   function shapeOf(sym) { return SHAPES[sym.shape] || SHAPES.circle; }
   function isRound(sym) { return sym.shape === 'custom' ? !!sym.round : !!shapeOf(sym).round; }
 
@@ -387,5 +394,5 @@
   const CONTROL_RE = /contr[oô]le|d[ée]tect|interrupt|gradat|photocell|capteur|sensor|switch|dimmer/i;
   function isControlSym(sym) { return !!sym && CONTROL_RE.test(`${sym.cat || ''} ${sym.name || ''}`); }
 
-Object.assign(LP, { isControlSym, drawPrims, symImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
+Object.assign(LP, { isControlSym, drawPrims, symImageIds, annotImageIds, arcPath, SHAPES, DEFAULT_SYMBOLS: DEFAULTS, drawSymbol, symbolSize, migrateSym, isRound, tagSize, fmtDim, parseDim, PT_PER_M });
 })();

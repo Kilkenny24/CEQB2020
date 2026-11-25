@@ -12,7 +12,7 @@
     cloud: 'Nuage de révision', polyline: 'Polyligne', polygon: 'Polygone', ink: 'Main levée',
     text: 'Texte', callout: 'Bulle (callout)', symbol: 'Symbole', length: 'Longueur',
     polylength: 'Longueur (polyligne)', area: 'Aire', calibrate: 'Calibration',
-    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble', room: 'Local', door: 'Porte',
+    note: 'Note (commentaire)', markup: 'Annotation de texte', schedule: 'Tableau des luminaires', cable: 'Câble', room: 'Local', door: 'Porte', image: 'Image',
   };
   const MARKUP_LABELS = { Highlight: 'Surlignage', Underline: 'Soulignement', StrikeOut: 'Barré', Squiggly: 'Ondulé' };
   const NOTE_SIZE = 18;
@@ -227,6 +227,26 @@
         R.beginPath(); R.rectPath(x, y, w, h); R.paint(fill, stroke);
         break;
       }
+      case 'image': {
+        const [x, y, w, h] = norm(pts[0], pts[1]);
+        const rot = (((a.rot || 0) % 360) + 360) % 360;
+        if (R.hasImage && R.hasImage(a.img)) {
+          const r = (rot * Math.PI) / 180, c = Math.round(Math.cos(r)), sn = Math.round(Math.sin(r));
+          const iw = rot % 180 ? h : w, ih = rot % 180 ? w : h; // taille de l'image avant rotation
+          R.save();
+          R.transform(c, sn, -sn, c, x + w / 2, y + h / 2);
+          R.image(a.img, -iw / 2, -ih / 2, iw, ih);
+          R.restore();
+        } else {
+          // Image absente (projet incomplet) : cadre de repère
+          R.save(); R.setAlpha(1); R.setStroke('#9aa3ad'); R.setLineWidth(Math.max(0.5, Math.min(w, h) / 200)); R.setDash([]);
+          R.beginPath(); R.rectPath(x, y, w, h); R.moveTo(x, y); R.lineTo(x + w, y + h); R.moveTo(x + w, y); R.lineTo(x, y + h); R.stroke();
+          R.restore();
+          drawLabel(R, 'Image manquante', x + w / 2, y + h / 2, Math.max(5, Math.min(12, w / 12)), '#5b6470');
+        }
+        if (stroke && s.stroke && s.stroke !== 'none') { R.beginPath(); R.rectPath(x, y, w, h); R.paint(null, true); }
+        break;
+      }
       case 'ellipse': {
         const [x, y, w, h] = norm(pts[0], pts[1]);
         R.beginPath(); R.ellipsePath(x + w / 2, y + h / 2, w / 2, h / 2); R.paint(fill, stroke);
@@ -386,6 +406,10 @@
         const v = Math.hypot((x - cx) / (rx || 1), (y - cy) / (ry || 1));
         if (filled) return v <= 1 + tol / Math.max(rx, ry, 1);
         return Math.abs(v - 1) * Math.min(rx, ry) <= tol + 1;
+      }
+      case 'image': {
+        const [bx, by, w, h] = norm(p[0], p[1]);
+        return x >= bx - tol && x <= bx + w + tol && y >= by - tol && y <= by + h + tol;
       }
       case 'text': case 'callout': case 'rect': case 'highlight': case 'cloud': {
         const box = a.type === 'callout' ? [p[1], p[2]] : [p[0], p[1]];
@@ -760,6 +784,11 @@
       case 'door': return `${LP.fmtDim(a.w != null ? a.w : 3 * FT, (env && env.unit ? env.unit() : 'ft'), false)}, ${a.swing === 'out' ? 'vers l\'extérieur' : 'vers l\'intérieur'}`;
       case 'cable': return LP.env && LP.env.ext && LP.env.ext.cableLabel ? LP.env.ext.cableLabel(a, true) : String(a.ctype || '');
       case 'markup': return MARKUP_LABELS[a.markup] || a.markup;
+      case 'image': {
+        const [, , w, h] = norm(a.pts[0], a.pts[1]);
+        const sz = sc ? `${LP.fmtDim(w * sc.mpp, sc.unit, false)} × ${LP.fmtDim(h * sc.mpp, sc.unit, false)}` : `${Math.round(w)} × ${Math.round(h)} pt`;
+        return `${a.name || 'Image'} — ${sz}`;
+      }
     }
     return a.comment || '';
   }
